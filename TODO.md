@@ -11,6 +11,10 @@ up to date at the end of every milestone.
   `CHANGELOG.md` and this file.
 - The `gladys-assistant-integration` topic is added at the first real release
   only (before, the store would list an empty integration).
+- No forum topic of its own, ever: never post on the forum from this repo's
+  work. Once the ten integrations claimed on 2026-10-15 are published, one
+  recap message goes to the general thread (/t/10385), posted by the main
+  session.
 
 ## Status
 
@@ -33,7 +37,7 @@ up to date at the end of every milestone.
       energy history (getmeasure) for NLE ecometer lines and the meters.
 - [ ] **Milestone 4 — first release**: cover image, Docker image build check,
       `npx github:GladysAssistant/integration-store .`, Release workflow,
-      topic, forum thread in Développement.
+      topic (no forum thread: see Working method).
 
 ## To check on a real installation
 
