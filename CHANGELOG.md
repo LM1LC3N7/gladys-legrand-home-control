@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-15
+
 ### Added
 
 - Link of the Legrand Home + Control account with the Gladys "Connect" button
@@ -28,4 +30,5 @@ the notes of the version's GitHub Release.
 - The reachability of every module on its transport badge.
 - "Test the connection" button.
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-legrand-home-control/commits/main
+[Unreleased]: https://github.com/LM1LC3N7/gladys-legrand-home-control/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LM1LC3N7/gladys-legrand-home-control/releases/tag/v0.1.1
