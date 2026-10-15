@@ -1,61 +1,86 @@
-# Demo Devices Template
+# Legrand Home + Control
 
-This is the user documentation of the integration. Gladys re-hosts this file
-and shows a permanent **Documentation** link to it in the Configuration screen
-(in the user's language, with English as the fallback) — it is when
-configuring that the user needs it most. Keep the short onboarding hints in
-the `section` blocks of the manifest `config_schema`; put the long
-step-by-step (screenshots, troubleshooting…) here.
+Control the **Céliane with Netatmo** and **dooxie with Netatmo** modules of
+your Legrand **Home + Control** gateway from Gladys: lights and dimmers, power
+outlets, contactors, roller shutters and energy meters. The integration talks
+to the Netatmo cloud (the service behind the Home + Control app) with the
+official Netatmo Connect API, on your behalf. Unofficial integration, not
+affiliated with Legrand or Netatmo.
+
+> **Development version (0.1).** Developed against the Netatmo documentation
+> and recorded answers, not yet tested on a real installation. Your feedback
+> is welcome on the GitHub repository.
 
 ## What you get
 
-Six demo devices show up after installation: a weather station (real data
-from Open-Meteo), a switch, a dimmable light, a smart plug with power
-metering, a motion sensor and a camera.
+| Module                                                              | In Gladys                                   |
+| ------------------------------------------------------------------- | ------------------------------------------- |
+| Power outlet, mobile socket, cable outlet (NLP, NLPM, NLC)          | a switch: on/off and power (W)              |
+| Teleruptor, contactor, dry contact (NLPT, NLPO, NLPD)               | a switch (a light when it drives a light)   |
+| Light switch, micromodule, double switch (NLL, NLM, NLIS)           | a light: on/off and power (one per gang)    |
+| Dimmer (NLF, NLFN, NLFE)                                            | a light: on/off, brightness and power       |
+| Roller shutter switch (NLV, NLLV), Zigbee covering (Z3V)            | a shutter: open, close, stop (and position) |
+| DIN energy meter, load shedder, three-phase meter (NLPC, NLPS, NLY) | power drawn (per phase for NLY)             |
+| Remote control (NLT, NLD)                                           | battery level                               |
 
-## Configuration
+The position of a shutter is offered for the modules that accept any position
+(NLLV); the others open, close and stop. Each device shows on its badge
+whether the module answers.
 
-1. Open the **Configuration** tab of the integration.
-2. Set the **latitude** and **longitude** the demo weather station should
-   observe (they default to Paris), and pick your temperature unit.
-   The **refresh interval** sets how often the weather station and the
-   plug's power are read: every 5 minutes by default, every minute at most.
-3. Save: the devices appear in the **Discovery** tab, ready to be added.
+Not yet: cable outlets in pilot-wire mode (radiators: their power only),
+ventilation (NLLF), garage door (NLJ), the ecometer lines (NLE), the button
+presses of the remotes, energy history. They are planned.
 
-The **Prefer the local connection** toggle drives the demo plug: it reports
-the channel it actually uses as a badge (local or cloud), with an orange dot
-when it runs degraded (local refused, cloud fallback).
+## Installation
 
-## Actions
+You need a **Netatmo app** of your own (free, five minutes): it gives the
+integration the right to use the API with your account.
 
-- **Test the weather provider** — performs a live request to Open-Meteo and
-  shows the current temperature and humidity under the button.
-- **Identify a device** — pick one of your devices in the list and it will
-  signal itself (the demo light "blinks" in the logs).
+1. Go to [dev.netatmo.com](https://dev.netatmo.com/apps/createanapp) and sign
+   in with the account of the **Home + Control** app.
+2. **Create an app**: any name and description (e.g. "Gladys"), your name and
+   email as data protection contact.
+3. In the Gladys configuration of the integration, copy the **redirect URI**
+   Gladys shows for the **Connect** button, and paste it in the **Redirect
+   URI** field of the Netatmo app. Save the app.
+4. Copy the **client ID** and the **client secret** of the app into the Gladys
+   configuration, and **save**.
+5. Click **Connect**: Netatmo asks you to sign in and to accept the Home +
+   Control rights (`read_magellan`, `write_magellan`). You come back to Gladys,
+   connected.
+6. Open the **Discovery** tab: your modules are there, add the ones you want.
 
-## Scenes
+**Test the connection** shows how many homes and devices were found.
 
-The integration adds its own cards to the scene editor (Gladys 5.1 or
-later), under the **Integrations** category:
+## Options
 
-- **Motion detected** (trigger) — starts the scene when a demo motion sensor
-  sees something move. Optionally pick the sensor and what moved (person,
-  animal); left empty, any detection matches. The following actions can
-  read what moved with `{{triggerEvent.data.target}}`.
-- **Identify a device** (action) — makes the chosen device signal itself.
-  It returns whether the device could signal itself, so the following
-  actions can depend on it.
+| Option           | Default | Purpose                                                        |
+| ---------------- | ------- | -------------------------------------------------------------- |
+| Refresh interval | 60 s    | how often the states are read (one minute minimum, max 1 hour) |
 
-## Dashboard
-
-Add the **Demo status** widget to a dashboard: it shows the live
-temperature of the weather station and the power of the office plug, the
-connection the plug currently uses (orange when degraded) and the observed
-location. Its **Identify the light** button makes the demo light signal
-itself.
+A command is sent at once and the state is read again a few seconds later.
+Netatmo limits the requests (500 per hour per user): the integration spaces
+them, sends the commands of a same moment together and pauses when Netatmo
+asks it to. With several homes or many commands, a longer interval is safer.
 
 ## Troubleshooting
 
-The integration logs everything it does: check the integration logs from the
-Gladys UI (or `docker logs` on the host) with `LOG_LEVEL=debug` for the full
-detail.
+- **"Netatmo refused the authorization"**: the authorization expired or was
+  revoked (from the Netatmo account), or the client secret is wrong. Check the
+  client ID and the client secret, save, then click **Connect** again.
+- **The Connect page shows an error**: the redirect URI of the Netatmo app is
+  not exactly the one Gladys shows (copy it again, without a space).
+- **"Read only"**: the Home + Control rights were not all accepted: click
+  **Connect** again and accept them.
+- **"usage limit reached"**: Netatmo asked to slow down; the integration
+  retries by itself. Increase the refresh interval if it comes back.
+- **A module is missing**: the logs list the modules the integration cannot
+  show yet; **Test the connection** counts them.
+- **A device shows "unreachable"**: the module or the gateway does not answer
+  Netatmo (power cut, Wi-Fi of the gateway).
+
+## Privacy
+
+The integration only talks to `api.netatmo.com`, with your own Netatmo app.
+The client secret and the tokens are stored by Gladys and never appear in the
+logs. Nothing goes through Gladys Plus.

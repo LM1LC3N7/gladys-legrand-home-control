@@ -1,33 +1,30 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeConfig, DEFAULT_CONFIG } from '../src/config.js';
+import { DEFAULTS, normalizeConfig } from '../src/config.js';
+import { POLL_INTERVAL } from '../src/constants.js';
 
-test('normalizeConfig returns the defaults when called with no argument', () => {
-  assert.deepEqual(normalizeConfig(), DEFAULT_CONFIG);
+test('the defaults: no app, one minute', () => {
+  assert.deepEqual(normalizeConfig(), {
+    clientId: '',
+    clientSecret: '',
+    hasApp: false,
+    pollInterval: DEFAULTS.poll_interval,
+  });
+  assert.deepEqual(normalizeConfig(null), normalizeConfig({}));
 });
 
-test('normalizeConfig keeps user values over the defaults', () => {
-  const config = normalizeConfig({ latitude: 45.5, longitude: -73.6, unit: 'fahrenheit' });
-  assert.equal(config.latitude, 45.5);
-  assert.equal(config.longitude, -73.6);
-  assert.equal(config.unit, 'fahrenheit');
+test('the app credentials are trimmed and both needed', () => {
+  const config = normalizeConfig({ client_id: ' abc ', client_secret: ' s3cret ' });
+  assert.equal(config.clientId, 'abc');
+  assert.equal(config.clientSecret, 's3cret');
+  assert.equal(config.hasApp, true);
+  assert.equal(normalizeConfig({ client_id: 'abc' }).hasApp, false);
+  assert.equal(normalizeConfig({ client_id: 'abc', client_secret: null }).hasApp, false);
 });
 
-test('normalizeConfig coerces numeric strings coming from a form', () => {
-  const config = normalizeConfig({ latitude: '48.8', longitude: '2.3', poll_frequency: '600' });
-  assert.equal(config.latitude, 48.8);
-  assert.equal(config.longitude, 2.3);
-  assert.equal(config.poll_frequency, 600);
-  assert.equal(typeof config.poll_frequency, 'number');
-});
-
-test('normalizeConfig falls back to the default for a missing numeric field', () => {
-  const config = normalizeConfig({ unit: 'celsius' });
-  assert.equal(config.poll_frequency, DEFAULT_CONFIG.poll_frequency);
-});
-
-test('GLADYS_PREFER_LOCAL defaults to true and only an explicit false disables it', () => {
-  assert.equal(normalizeConfig().GLADYS_PREFER_LOCAL, true);
-  assert.equal(normalizeConfig({ GLADYS_PREFER_LOCAL: true }).GLADYS_PREFER_LOCAL, true);
-  assert.equal(normalizeConfig({ GLADYS_PREFER_LOCAL: false }).GLADYS_PREFER_LOCAL, false);
+test('the refresh interval stays within the Netatmo usage limits', () => {
+  assert.equal(normalizeConfig({ poll_interval: 10 }).pollInterval, POLL_INTERVAL.min);
+  assert.equal(normalizeConfig({ poll_interval: 99_999 }).pollInterval, POLL_INTERVAL.max);
+  assert.equal(normalizeConfig({ poll_interval: '120.4' }).pollInterval, 120);
+  assert.equal(normalizeConfig({ poll_interval: 'soon' }).pollInterval, POLL_INTERVAL.default);
 });

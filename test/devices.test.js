@@ -1,240 +1,140 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  DEVICE_FEATURE_CATEGORIES,
-  DEVICE_FEATURE_TYPES,
-  DEVICE_POLL_FREQUENCIES,
-  DEVICE_TRANSPORTS,
-} from '@gladysassistant/integration-sdk';
 import { createFakeGladys } from '@gladysassistant/integration-sdk/testing';
-import {
-  DEVICE_BLUEPRINTS,
-  buildDiscoveredDevices,
-  buildTransportEntries,
-  createPoller,
-  findBlueprintByDevice,
-  identifyDevice,
-} from '../src/devices/index.js';
-import { simulateLanSession } from '../src/devices/plug.js';
-import { normalizeConfig } from '../src/config.js';
+import { describe as describeModule, KINDS } from '../src/catalog.js';
+import { buildModel, mergeSeen, platformId } from '../src/devices.js';
+import { HOMESDATA, HOMESTATUS, HOME_ID, M } from './fixtures/netatmo.js';
 
 const gladys = createFakeGladys();
-const config = normalizeConfig();
+const homes = HOMESDATA.body.homes;
+const statuses = new Map([[HOME_ID, HOMESTATUS.body]]);
+const idOf = (moduleId) => `ext:test-integration:module:${platformId(moduleId)}`;
 
-test('every blueprint exposes the required shape', () => {
-  for (const bp of DEVICE_BLUEPRINTS) {
-    assert.equal(typeof bp.key, 'string', 'key must be a string');
-    assert.equal(typeof bp.deviceExternalId, 'function', 'deviceExternalId must be a function');
-    assert.equal(typeof bp.buildDevice, 'function', 'buildDevice must be a function');
-  }
+function full() {
+  return buildModel(gladys, homes, statuses, mergeSeen(new Map(), HOMESTATUS.body));
+}
+
+const device = (model, moduleId) => model.devices.find((d) => d.external_id === idOf(moduleId));
+const shape = (d) => d.features.map((f) => `${f.category}/${f.type}${f.read_only ? ' (ro)' : ''}`);
+
+test('module ids become stable external ids', () => {
+  assert.equal(platformId('00:04:74:00:00:01:AA:07#2'), '000474000001aa07-2');
+  assert.equal(idOf(M.OUTLET), 'ext:test-integration:module:000474000001aa01');
 });
 
-test('buildDiscoveredDevices returns one payload per blueprint', () => {
-  const devices = buildDiscoveredDevices(gladys, config);
-  assert.equal(devices.length, DEVICE_BLUEPRINTS.length);
-  for (const device of devices) {
-    assert.equal(typeof device.name, 'string');
-    assert.ok(device.external_id, 'each device has an external_id');
-    assert.ok(Array.isArray(device.features) && device.features.length > 0);
-  }
-});
-
-test('Gladys accepts the discovery payload', async () => {
-  // The SDK fake checks the payload like the host API does: external_id
-  // prefix, known category/type/unit, poll_frequency... A refusal is a 400
-  // for the WHOLE list, so no device would show up in the Discovery tab.
-  const fresh = createFakeGladys();
-  await fresh.publishDiscoveredDevices(buildDiscoveredDevices(fresh, config));
-  assert.equal(fresh.fake.discoveredDevices.length, DEVICE_BLUEPRINTS.length);
-});
-
-test('Gladys polls exactly the devices that implement onPoll', () => {
-  const frequencies = Object.values(DEVICE_POLL_FREQUENCIES);
-  for (const bp of DEVICE_BLUEPRINTS) {
-    const device = bp.buildDevice(gladys, config);
-    if (typeof bp.onPoll === 'function') {
-      assert.equal(device.should_poll, true, `${bp.key}: without should_poll, never polled`);
-      assert.ok(frequencies.includes(device.poll_frequency), `${bp.key}: invalid poll_frequency`);
-    } else {
-      assert.notEqual(device.should_poll, true, `${bp.key}: polled for nothing`);
-    }
-  }
-});
-
-test('the poller reads a device at the refresh interval of the config', async (t) => {
-  t.mock.timers.enable({ apis: ['Date'] });
-  const fresh = createFakeGladys();
-  const pollDevice = createPoller();
-  const plug = {
-    external_id: DEVICE_BLUEPRINTS.find((bp) => bp.key === 'plug').deviceExternalId(fresh),
-  };
-  const everyFiveMinutes = normalizeConfig({ poll_frequency: 300 });
-
-  assert.equal(await pollDevice(fresh, plug, everyFiveMinutes), true, 'the first poll reads');
-  for (let minute = 1; minute < 5; minute += 1) {
-    t.mock.timers.tick(DEVICE_POLL_FREQUENCIES.EVERY_MINUTES);
-    assert.equal(
-      await pollDevice(fresh, plug, everyFiveMinutes),
-      false,
-      `skipped at ${minute} min`,
-    );
-  }
-  // Gladys' tick may land a little early: the read is still due.
-  t.mock.timers.tick(DEVICE_POLL_FREQUENCIES.EVERY_MINUTES - 50);
-  assert.equal(await pollDevice(fresh, plug, everyFiveMinutes), true, 'read again at 5 min');
-});
-
-test('the poller retries a failed read at the next poll', async (t) => {
-  t.mock.timers.enable({ apis: ['Date'] });
-  const pollDevice = createPoller();
-  const station = {
-    external_id: DEVICE_BLUEPRINTS.find((bp) => bp.key === 'weather-station').deviceExternalId(
-      gladys,
-    ),
-  };
-  t.mock.method(globalThis, 'fetch', async () => {
-    throw new Error('network down');
-  });
-  await assert.rejects(pollDevice(gladys, station, config), /network down/);
-
-  globalThis.fetch.mock.mockImplementation(async () => ({
-    ok: true,
-    json: async () => ({ current: { temperature_2m: 21.4, relative_humidity_2m: 55 } }),
-  }));
-  t.mock.timers.tick(DEVICE_POLL_FREQUENCIES.EVERY_MINUTES);
-  assert.equal(await pollDevice(gladys, station, config), true, 'not delayed by the failure');
-  assert.equal(gladys.fake.lastState(`${station.external_id}:temperature`), 21.4);
-});
-
-test('the poller ignores a device that has nothing to poll', async () => {
-  const pollDevice = createPoller();
-  const switchId = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'switch').deviceExternalId(gladys);
-  assert.equal(await pollDevice(gladys, { external_id: switchId }, config), false);
-  assert.equal(await pollDevice(gladys, { external_id: 'does-not-exist' }, config), false);
-});
-
-test('an idle plug publishes its 0 W once, then only as a heartbeat', async (t) => {
-  t.mock.timers.enable({ apis: ['Date'] });
-  const fresh = createFakeGladys();
-  const plug = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'plug');
-  await plug.onPoll(fresh, config);
-  await plug.onPoll(fresh, config);
-  assert.equal(fresh.fake.states.length, 1, 'an unchanged value is not sent again');
-  t.mock.timers.tick(30 * 60 * 1000);
-  await plug.onPoll(fresh, config);
-  assert.equal(fresh.fake.states.length, 2, 're-sent after 30 minutes');
-});
-
-test('device external_ids are unique across the catalog', () => {
-  const devices = buildDiscoveredDevices(gladys, config);
-  const ids = devices.map((d) => d.external_id);
-  assert.equal(new Set(ids).size, ids.length, 'no two devices may share an external_id');
-});
-
-test('findBlueprintByDevice routes an external_id back to its owner blueprint', () => {
-  for (const bp of DEVICE_BLUEPRINTS) {
-    const external_id = bp.deviceExternalId(gladys);
-    const found = findBlueprintByDevice(gladys, { external_id });
-    assert.equal(found, bp);
-  }
-});
-
-test('findBlueprintByDevice returns undefined for an unknown device', () => {
-  const found = findBlueprintByDevice(gladys, { external_id: 'does-not-exist' });
-  assert.equal(found, undefined);
-});
-
-test('manifest action keys are unique across blueprints', () => {
-  const keys = DEVICE_BLUEPRINTS.flatMap((bp) => Object.keys(bp.actions ?? {}));
-  assert.equal(new Set(keys).size, keys.length, 'no two blueprints may register the same action');
-});
-
-test('the camera declares a camera/image feature', () => {
-  const cameraBlueprint = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'camera');
-  const device = cameraBlueprint.buildDevice(gladys, config);
-  const imageFeature = device.features.find((f) => f.category === DEVICE_FEATURE_CATEGORIES.CAMERA);
-  assert.ok(imageFeature, 'the camera must carry a camera feature');
-  assert.equal(imageFeature.type, DEVICE_FEATURE_TYPES.CAMERA.IMAGE);
-  assert.equal(imageFeature.read_only, true);
-});
-
-test('onGetImage resolves a base64 JPEG under the 150 KB limit', async () => {
-  const cameraBlueprint = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'camera');
-  const image = await cameraBlueprint.onGetImage(gladys, {
-    device: { external_id: cameraBlueprint.deviceExternalId(gladys) },
-    config,
-  });
-  assert.match(image, /^image\/jpg;base64,/);
-  assert.ok(image.length <= 150 * 1024, 'the image must stay under 150 KB');
-});
-
-test('buildTransportEntries reports one valid entry per dual-channel device', () => {
-  const entries = buildTransportEntries(gladys, config);
-  assert.ok(entries.length > 0, 'the demo plug reports its transport');
-  const validValues = Object.values(DEVICE_TRANSPORTS);
-  for (const entry of entries) {
-    assert.ok(entry.external_id, 'each entry targets a device external_id');
-    assert.ok(validValues.includes(entry.transport), `invalid transport: ${entry.transport}`);
-  }
-});
-
-test('the demo plug honors the GLADYS_PREFER_LOCAL preference', () => {
-  const local = buildTransportEntries(gladys, normalizeConfig({ GLADYS_PREFER_LOCAL: true }));
-  const cloud = buildTransportEntries(gladys, normalizeConfig({ GLADYS_PREFER_LOCAL: false }));
-  const plugId = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'plug').deviceExternalId(gladys);
-  assert.equal(local.find((e) => e.external_id === plugId).transport, DEVICE_TRANSPORTS.LOCAL);
-  assert.equal(cloud.find((e) => e.external_id === plugId).transport, DEVICE_TRANSPORTS.CLOUD);
-});
-
-test('nominal transport entries never carry a leftover degraded flag', () => {
-  const entries = buildTransportEntries(gladys, config);
-  for (const entry of entries) {
-    assert.equal(entry.degraded, undefined, 'nominal entries must clear the degraded state');
-  }
-});
-
-test('the plug reports a degraded cloud fallback when the LAN session is refused', () => {
-  const plugId = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'plug').deviceExternalId(gladys);
-  simulateLanSession(false);
-  try {
-    const entries = buildTransportEntries(gladys, normalizeConfig({ GLADYS_PREFER_LOCAL: true }));
-    const entry = entries.find((e) => e.external_id === plugId);
-    assert.equal(entry.transport, DEVICE_TRANSPORTS.CLOUD, 'falls back to cloud');
-    assert.equal(entry.degraded, true, 'the fallback is flagged degraded');
-    assert.ok(entry.message.en, 'the reason carries at least the mandatory `en` text');
-    assert.ok(entry.message.en.length <= 200, 'tooltip messages are capped at 200 characters');
-  } finally {
-    simulateLanSession(true);
-  }
-});
-
-test('identifyDevice signals a device that implements identify', async () => {
-  const lightId = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'light').deviceExternalId(gladys);
-  const message = await identifyDevice(gladys, lightId, config);
-  assert.match(message.en, /signalling/);
-  assert.ok(message.fr, 'the message is multi-language');
-});
-
-test('identifyDevice explains when the device has no way to signal itself', async () => {
-  const weatherId = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'weather-station').deviceExternalId(
-    gladys,
+test('one device per Home + Control module, the gateway and the others left out', () => {
+  const model = full();
+  assert.deepEqual(model.homes, [{ id: HOME_ID, name: 'Maison', modules: 22 }]);
+  assert.equal(model.devices.length, 14);
+  assert.deepEqual(
+    model.skipped.map((s) => s.id),
+    [`${M.ECOMETER}#0`, M.BATTERYLESS],
+    'the ecometer line (no power in homestatus) and the batteryless switch',
   );
-  const message = await identifyDevice(gladys, weatherId, config);
-  assert.match(message.en, /no way to signal/);
+  assert.equal(device(model, M.GATEWAY), undefined);
+  assert.equal(device(model, M.DOUBLE), undefined, 'the double switch container');
+  assert.equal(
+    model.devices.some((d) => d.model.includes('NAPlug')),
+    false,
+    'the thermostat is not Home + Control',
+  );
 });
 
-test('the test_weather action returns a multi-language message', async () => {
-  const realFetch = globalThis.fetch;
-  globalThis.fetch = async () => ({
-    ok: true,
-    json: async () => ({ current: { temperature_2m: 21.4, relative_humidity_2m: 55 } }),
+test('outlets, contactors and relays are switches with their power', () => {
+  const model = full();
+  const outlet = device(model, M.OUTLET);
+  assert.equal(outlet.name, 'Prise salon');
+  assert.equal(outlet.model, 'Legrand Power outlet (NLP)');
+  assert.equal(outlet.should_poll, false);
+  assert.deepEqual(shape(outlet), ['switch/binary', 'switch/power (ro)']);
+  assert.deepEqual(outlet.params, [
+    { name: 'NETATMO_HOME_ID', value: HOME_ID },
+    { name: 'NETATMO_MODULE_ID', value: M.OUTLET },
+    { name: 'NETATMO_MODULE_TYPE', value: 'NLP' },
+    { name: 'NETATMO_BRIDGE_ID', value: M.GATEWAY },
+    { name: 'NETATMO_ROOM', value: 'Salon' },
+  ]);
+  assert.equal(outlet.features[1].unit, 'watt');
+  assert.deepEqual(shape(device(model, M.CONTACTOR)), ['switch/binary', 'switch/power (ro)']);
+  assert.deepEqual(
+    shape(device(model, M.TELERUPTOR)),
+    ['light/binary', 'light/power (ro)'],
+    'a teleruptor driving a light is a light',
+  );
+  assert.deepEqual(
+    shape(device(model, M.RADIATOR)),
+    ['switch/power (ro)'],
+    'a pilot-wire radiator takes modes, not on/off',
+  );
+});
+
+test('lights, dimmers and the gangs of a double switch', () => {
+  const model = full();
+  assert.deepEqual(shape(device(model, M.LIGHT)), ['light/binary', 'light/power (ro)']);
+  const dimmer = device(model, M.DIMMER);
+  assert.deepEqual(shape(dimmer), ['light/binary', 'light/brightness', 'light/power (ro)']);
+  assert.deepEqual(
+    [dimmer.features[1].min, dimmer.features[1].max, dimmer.features[1].unit],
+    [0, 100, 'percent'],
+  );
+  const left = device(model, `${M.DOUBLE}#1`);
+  assert.equal(left.name, 'Applique gauche');
+  assert.equal(left.external_id, 'ext:test-integration:module:000474000001aa07-1');
+  assert.deepEqual(shape(left), ['light/binary', 'light/power (ro)']);
+  assert.equal(device(model, `${M.DOUBLE}#2`).name, 'Applique droite');
+});
+
+test('shutters get a position only when the module has one', () => {
+  const model = full();
+  const plain = device(model, M.SHUTTER);
+  assert.deepEqual(shape(plain), ['shutter/state']);
+  assert.deepEqual([plain.features[0].min, plain.features[0].max], [-1, 1]);
+  assert.deepEqual(shape(device(model, M.LEVEL_SHUTTER)), ['shutter/state', 'shutter/position']);
+});
+
+test('meters, phases, remotes and a module type the catalog does not know', () => {
+  const model = full();
+  assert.deepEqual(shape(device(model, M.METER)), ['energy-sensor/power (ro)']);
+  const phases = device(model, M.THREE_PHASE);
+  assert.deepEqual(
+    phases.features.map((f) => [f.name, f.external_id.split(':').at(-1)]),
+    [
+      ['Power', 'power'],
+      ['Power phase 1', 'power-1'],
+      ['Power phase 2', 'power-2'],
+      ['Power phase 3', 'power-3'],
+    ],
+  );
+  assert.equal(phases.features[0].max, 50_000);
+  assert.deepEqual(shape(device(model, M.REMOTE)), ['battery/integer (ro)']);
+  assert.deepEqual(shape(device(model, M.FUTURE)), ['switch/binary', 'switch/power (ro)']);
+  assert.deepEqual(model.routes.get(`${idOf(M.THREE_PHASE)}:power-2`), {
+    featureId: `${idOf(M.THREE_PHASE)}:power-2`,
+    deviceId: idOf(M.THREE_PHASE),
+    homeId: HOME_ID,
+    moduleId: M.THREE_PHASE,
+    statusId: `${M.THREE_PHASE}#2`,
+    bridge: M.GATEWAY,
+    key: 'power',
+    type: 'NLY',
+    readOnly: true,
   });
-  try {
-    const weatherStation = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'weather-station');
-    const message = await weatherStation.actions.test_weather(gladys, { fields: {}, config });
-    assert.match(message.en, /21\.4/);
-    assert.match(message.fr, /21\.4/);
-  } finally {
-    globalThis.fetch = realFetch;
-  }
+});
+
+test('before the first status: the catalog alone', () => {
+  const model = buildModel(gladys, homes);
+  assert.equal(model.devices.length, 12, 'the remote battery and the unknown type wait');
+  assert.deepEqual(describeModule('NLZZ', undefined).kind, KINDS.IGNORED);
+  assert.equal(describeModule('NAPlug', {}), null);
+  assert.equal(describeModule('NLXX', { brightness: 10 }).kind, KINDS.DIMMER);
+  assert.equal(describeModule('Z3X', { target_position: 0 }).kind, KINDS.SHUTTER);
+});
+
+test('a feature seen once stays (an unreachable module does not lose it)', () => {
+  const seen = mergeSeen(new Map(), HOMESTATUS.body);
+  const quiet = structuredClone(HOMESTATUS.body);
+  quiet.home.modules = quiet.home.modules.filter((m) => m.id !== M.REMOTE);
+  mergeSeen(seen, quiet);
+  const model = buildModel(gladys, homes, new Map([[HOME_ID, quiet]]), seen);
+  assert.deepEqual(shape(device(model, M.REMOTE)), ['battery/integer (ro)']);
 });

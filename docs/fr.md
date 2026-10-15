@@ -1,67 +1,93 @@
-# Template de démonstration
+# Legrand Home + Control
 
-Ceci est la documentation utilisateur de l'intégration. Gladys ré-héberge ce
-fichier et affiche un lien **Documentation** permanent vers lui dans l'écran
-de configuration (dans la langue de l'utilisateur, avec l'anglais en repli) —
-c'est au moment de configurer que l'utilisateur en a le plus besoin. Gardez
-les courtes indications d'accueil dans les blocs `section` du `config_schema`
-du manifest ; mettez ici le pas-à-pas détaillé (captures d'écran, dépannage…).
+Pilotez depuis Gladys les modules **Céliane with Netatmo** et **dooxie with
+Netatmo** de votre passerelle Legrand **Home + Control** : éclairages et
+variateurs, prises, contacteurs, volets roulants et compteurs d'énergie.
+L'intégration passe par le cloud Netatmo (le service derrière l'application
+Home + Control) avec l'API officielle Netatmo Connect, en votre nom.
+Intégration non officielle, sans lien avec Legrand ni Netatmo.
+
+> **Version de développement (0.1).** Développée d'après la documentation
+> Netatmo et des réponses enregistrées, pas encore testée sur une vraie
+> installation. Vos retours sont les bienvenus sur le dépôt GitHub.
 
 ## Ce que vous obtenez
 
-Six appareils de démonstration apparaissent après l'installation : une
-station météo (vraies données Open-Meteo), un interrupteur, une lampe
-variable, une prise connectée avec mesure de puissance, un détecteur de
-mouvement et une caméra.
+| Module                                                             | Dans Gladys                                          |
+| ------------------------------------------------------------------ | ---------------------------------------------------- |
+| Prise, prise mobile, sortie de câble (NLP, NLPM, NLC)              | un interrupteur : marche/arrêt et puissance (W)      |
+| Télérupteur, contacteur, contact sec (NLPT, NLPO, NLPD)            | un interrupteur (une lampe s'il commande une lampe)  |
+| Interrupteur, micromodule, double interrupteur (NLL, NLM, NLIS)    | une lampe : marche/arrêt et puissance (une par voie) |
+| Variateur (NLF, NLFN, NLFE)                                        | une lampe : marche/arrêt, luminosité et puissance    |
+| Interrupteur de volet (NLV, NLLV), volet Zigbee (Z3V)              | un volet : ouvrir, fermer, stop (et position)        |
+| Compteur modulaire, délesteur, compteur triphasé (NLPC, NLPS, NLY) | puissance consommée (par phase pour le NLY)          |
+| Commande sans fil (NLT, NLD)                                       | niveau de batterie                                   |
 
-## Configuration
+La position d'un volet est proposée pour les modules qui acceptent toutes les
+positions (NLLV) ; les autres s'ouvrent, se ferment et s'arrêtent. Le badge de
+chaque appareil indique si le module répond.
 
-1. Ouvrez l'onglet **Configuration** de l'intégration.
-2. Renseignez la **latitude** et la **longitude** que la station météo de
-   démonstration doit observer (Paris par défaut), et choisissez votre unité
-   de température. L'**intervalle de rafraîchissement** règle la fréquence
-   de lecture de la station météo et de la puissance de la prise : toutes
-   les 5 minutes par défaut, toutes les minutes au plus.
-3. Enregistrez : les appareils apparaissent dans l'onglet **Découverte**,
-   prêts à être ajoutés.
+Pas encore : les sorties de câble en mode fil pilote (radiateurs : leur
+puissance seulement), la VMC (NLLF), la porte de garage (NLJ), les lignes de
+l'écocompteur (NLE), les appuis sur les commandes sans fil, l'historique
+d'énergie. Ils sont prévus.
 
-Le réglage **Préférer la connexion locale** pilote la prise de
-démonstration : elle affiche en badge le canal réellement utilisé (local ou
-cloud), avec un point orange quand elle fonctionne en mode dégradé (local
-refusé, bascule cloud).
+## Installation
 
-## Actions
+Il vous faut une **application Netatmo** à vous (gratuite, cinq minutes) :
+elle donne à l'intégration le droit d'utiliser l'API avec votre compte.
 
-- **Tester le fournisseur météo** — effectue une requête en direct vers
-  Open-Meteo et affiche la température et l'humidité actuelles sous le
-  bouton.
-- **Identifier un appareil** — choisissez un de vos appareils dans la liste
-  et il se signale (la lampe de démonstration « clignote » dans les logs).
+1. Allez sur [dev.netatmo.com](https://dev.netatmo.com/apps/createanapp) et
+   connectez-vous avec le compte de l'application **Home + Control**.
+2. **Créez une application** : nom et description libres (ex. « Gladys »),
+   votre nom et votre e-mail comme contact protection des données.
+3. Dans la configuration de l'intégration dans Gladys, copiez l'**URI de
+   redirection** que Gladys affiche pour le bouton **Connecter**, et collez-la
+   dans le champ **Redirect URI** de l'application Netatmo. Enregistrez
+   l'application.
+4. Copiez le **client ID** et le **client secret** de l'application dans la
+   configuration Gladys, et **enregistrez**.
+5. Cliquez sur **Connecter** : Netatmo vous demande de vous identifier et
+   d'accepter les droits Home + Control (`read_magellan`, `write_magellan`).
+   Vous revenez dans Gladys, connecté.
+6. Ouvrez l'onglet **Découverte** : vos modules y sont, ajoutez ceux que vous
+   voulez.
 
-## Scènes
+**Tester la connexion** indique combien de logements et d'appareils ont été
+trouvés.
 
-L'intégration ajoute ses propres cartes à l'éditeur de scènes (Gladys 5.1
-ou plus récent), dans la catégorie **Intégrations** :
+## Options
 
-- **Mouvement détecté** (déclencheur) — lance la scène quand un détecteur
-  de démonstration voit bouger quelque chose. Choisissez éventuellement le
-  détecteur et ce qui a bougé (personne, animal) ; laissés vides, toute
-  détection correspond. Les actions suivantes peuvent lire ce qui a bougé
-  avec `{{triggerEvent.data.target}}`.
-- **Identifier un appareil** (action) — fait se signaler l'appareil choisi.
-  Elle indique si l'appareil a pu se signaler, pour que les actions
-  suivantes puissent en dépendre.
+| Option                         | Défaut | Rôle                                                               |
+| ------------------------------ | ------ | ------------------------------------------------------------------ |
+| Intervalle de rafraîchissement | 60 s   | fréquence de lecture des états (une minute minimum, une heure max) |
 
-## Tableau de bord
-
-Ajoutez le widget **État de la démo** à un tableau de bord : il affiche en
-direct la température de la station météo et la puissance de la prise du
-bureau, la connexion utilisée par la prise (en orange si dégradée) et la
-position observée. Son bouton **Identifier la lampe** fait se signaler la
-lampe de démonstration.
+Une commande part tout de suite et l'état est relu quelques secondes après.
+Netatmo limite les requêtes (500 par heure et par utilisateur) : l'intégration
+les espace, envoie ensemble les commandes d'un même instant et fait une pause
+quand Netatmo le demande. Avec plusieurs logements ou beaucoup de commandes,
+un intervalle plus long est plus sûr.
 
 ## Dépannage
 
-L'intégration journalise tout ce qu'elle fait : consultez les logs de
-l'intégration depuis l'interface Gladys (ou `docker logs` sur l'hôte) avec
-`LOG_LEVEL=debug` pour le détail complet.
+- **« Netatmo a refusé l'autorisation »** : l'autorisation a expiré ou a été
+  révoquée (depuis le compte Netatmo), ou le client secret est erroné.
+  Vérifiez le client ID et le client secret, enregistrez, puis cliquez à
+  nouveau sur **Connecter**.
+- **La page de connexion affiche une erreur** : l'URI de redirection de
+  l'application Netatmo n'est pas exactement celle que Gladys affiche
+  (recopiez-la, sans espace).
+- **« Lecture seule »** : les droits Home + Control n'ont pas tous été
+  acceptés : cliquez à nouveau sur **Connecter** et acceptez-les.
+- **« Limite d'usage atteinte »** : Netatmo a demandé de ralentir ;
+  l'intégration réessaie seule. Augmentez l'intervalle si cela se répète.
+- **Un module manque** : les logs listent les modules que l'intégration ne sait
+  pas encore afficher ; **Tester la connexion** les compte.
+- **Un appareil est « injoignable »** : le module ou la passerelle ne répond
+  plus à Netatmo (coupure de courant, Wi-Fi de la passerelle).
+
+## Confidentialité
+
+L'intégration ne parle qu'à `api.netatmo.com`, avec votre propre application
+Netatmo. Le client secret et les jetons sont conservés par Gladys et
+n'apparaissent jamais dans les logs. Rien ne passe par Gladys Plus.
