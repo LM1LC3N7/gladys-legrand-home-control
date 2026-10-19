@@ -214,9 +214,11 @@ export class NetatmoClient {
    * `modules` may be a function called at the last moment, once the request
    * budget and the token are there: an empty list then sends nothing (every
    * command was withdrawn) and resolves null. `onSend` is called right before
-   * the request leaves.
+   * the request leaves; `onRetry` when Netatmo refused it for its access token
+   * (nothing applied) and it waits for the refresh before being replayed: the
+   * replay reads the list again.
    */
-  async setState(homeId, modules, { onSend } = {}) {
+  async setState(homeId, modules, { onSend, onRetry } = {}) {
     const data = await this.call('POST', 'setstate', {
       json: () => {
         const list = typeof modules === 'function' ? modules() : modules;
@@ -224,6 +226,7 @@ export class NetatmoClient {
       },
       priority: PRIORITY.COMMAND,
       onSend,
+      onRetry,
     });
     if (data === null) {
       return null;
@@ -231,7 +234,11 @@ export class NetatmoClient {
     return Array.isArray(data?.body?.errors) ? data.body.errors : [];
   }
 
-  async call(method, endpoint, { query, json, priority = PRIORITY.BACKGROUND, onSend } = {}) {
+  async call(
+    method,
+    endpoint,
+    { query, json, priority = PRIORITY.BACKGROUND, onSend, onRetry } = {},
+  ) {
     for (let attempt = 0; ; attempt += 1) {
       await this.limiter.acquire(priority);
       const token = await this.tokens.accessToken();
@@ -244,6 +251,8 @@ export class NetatmoClient {
         return await this.send(method, endpoint, { query, json: body, token });
       } catch (err) {
         if (err.kind === ERROR_KINDS.AUTH && attempt === 0) {
+          // Refused for its token: nothing was applied, the request is back to unsent.
+          onRetry?.();
           await this.tokens.refresh(token);
           continue;
         }

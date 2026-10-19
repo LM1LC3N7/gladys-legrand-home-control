@@ -47,8 +47,10 @@ cette version, rien ne change pour vos modules Legrand ; si des volets
 Bubendorff sont trouvés sans le droit `write_bubendorff`, le statut vous
 invite à cliquer à nouveau sur **Connecter** pour ajouter Bubendorff. Si votre
 application Netatmo ne propose pas ces droits, l'intégration se replie sur les
-seuls droits Home + Control (tout de suite si Netatmo les refuse à la liaison,
-ou au clic suivant après une page d'autorisation refusée).
+seuls droits Home + Control : tout de suite si Netatmo les refuse à la liaison,
+et sinon quand vous cliquez à nouveau sur **Connecter** après une page
+d'autorisation Netatmo qui ne vous a pas ramené dans Gladys (ce clic-là demande
+les seuls droits Home + Control).
 
 Une commande de volet n'est jamais envoyée en retard : une à la fois par volet
 (un stop n'attend jamais), refusée si Netatmo n'a pas pu la prendre en quatre

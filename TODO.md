@@ -61,7 +61,9 @@ up to date at the end of every milestone.
 - Bubendorff: the authorization page with the four rights; what an app without
   them answers (`invalid_scope` at the redirect or the exchange, or rights
   silently dropped from the token); homesdata without `read_bubendorff`;
-  NBR/NBO/NBS `current_position` and step in practice (always 100?); setstate
+  NBR/NBO/NBS `current_position` and step in practice (always 100?); NBS is
+  in the pyatmo type list but in no fixture nor its shutter category table, so
+  it is a shutter here by analogy only; setstate
   with the NBG as bridge; the favourite position (-2) as a future button.
 
 ## Decisions
@@ -79,9 +81,22 @@ up to date at the end of every milestone.
   request while the token is known to lack `write_bubendorff`, and the status
   adds "click Connect again to add Bubendorff" only when Bubendorff devices
   exist. An unknown token scope never warns. `invalid_scope` at the code
-  exchange retries once with the Legrand rights only; a callback without a code
-  after asking for Bubendorff makes the NEXT Connect ask for the Legrand rights
-  only, once (every attempt is a user click: no loop).
+  exchange retries once with the Legrand rights only and marks the error
+  `scopeRefused` whatever the retry answered (a single-use code may be
+  refused): the next Connect asks for the Legrand rights only. The Gladys core
+  refuses any OAuth return without a code, so a refused authorization page is
+  detected in `authorizeUrl`: a Connect while an unexpired Bubendorff
+  authorization never came back asks for the Legrand rights only, once (that
+  pending one is marked, the click after asks for all rights again). Every
+  attempt is a user click: no loop. A token answer without `scope` keeps the
+  rights asked for.
+- A created device never loses a feature: `buildModel` keeps the position,
+  power and battery features the device in `gladys.devices` already has, even
+  when the statuses read since a reconnection or a restart do not show them.
+- Shutter queue: the commands of a device are chained (a stop never waits, but
+  the command after it waits for every command still in flight). A setstate
+  refused for its access token (nothing applied) is back to unsent while the
+  token is refreshed, so it can still be withdrawn at the ack.
 - Bubendorff types from pyatmo (MIT, THIRD_PARTY_NOTICES.md): NBG gateway (no
   device), NBR roller, NBO orientable, NBS swing shutters, all `shutter`
   (never `switch`). A position feature only when the status reports a

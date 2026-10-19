@@ -44,9 +44,10 @@ The **Connect** button now also asks for the Bubendorff rights
 nothing changes for your Legrand modules; when Bubendorff shutters are found
 without the `write_bubendorff` right, the status asks you to click **Connect**
 again to add Bubendorff. If your Netatmo app does not offer these rights,
-the integration falls back to the Home + Control rights alone (at once when
-Netatmo refuses them while linking, or at the next click after a refused
-authorization page).
+the integration falls back to the Home + Control rights alone: at once when
+Netatmo refuses them while linking, and otherwise when you click **Connect**
+again after a Netatmo authorization page that did not bring you back to
+Gladys (that one click asks for the Home + Control rights only).
 
 A shutter command is never sent late: one at a time per shutter (a stop never
 waits), refused if Netatmo could not take it within four seconds, and

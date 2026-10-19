@@ -105,10 +105,14 @@ const power = (ids, category, key = FEATURES.POWER, name = 'Power') =>
  * The features of one module, and the status entry each one reads:
  * [{ feature, key, statusId }].
  */
-function featuresOf(ids, module, desc, seen, gangs) {
+function featuresOf(ids, module, desc, seen, gangs, kept) {
   const s = seen.get(module.id) ?? {};
   const own = (f, key) => ({ feature: f, key, statusId: module.id });
-  const withPower = desc.power || s.power;
+  // A feature of the device the user created is never dropped (a reconnection
+  // or a restart forgets what the statuses told; the core would mark the device
+  // as changed and an update would lose its history).
+  const has = (key) => kept.has(ids.feature(key));
+  const withPower = desc.power || s.power || has(FEATURES.POWER);
   switch (desc.kind) {
     case KINDS.SWITCH: {
       const category = module.appliance_type === 'light' ? C.LIGHT : C.SWITCH;
@@ -156,7 +160,7 @@ function featuresOf(ids, module, desc, seen, gangs) {
           FEATURES.STATE,
         ),
       ];
-      if (desc.position || (s.step !== undefined && s.step < 100)) {
+      if (desc.position || (s.step !== undefined && s.step < 100) || has(FEATURES.POSITION)) {
         list.push(
           own(
             feature(ids, FEATURES.POSITION, 'Position', {
@@ -187,7 +191,7 @@ function featuresOf(ids, module, desc, seen, gangs) {
       return list;
     }
     case KINDS.REMOTE:
-      return s.battery
+      return s.battery || has(FEATURES.BATTERY)
         ? [
             own(
               feature(ids, FEATURES.BATTERY, 'Battery', {
@@ -244,6 +248,10 @@ export function buildModel(gladys, homes, statuses = new Map(), seen = new Map()
     bubendorff: 0,
   };
   const takenIds = new Set();
+  /** feature external ids of the devices the user created */
+  const kept = new Set(
+    (gladys.devices ?? []).flatMap((d) => (d.features ?? []).map((f) => f.external_id)),
+  );
   for (const home of Array.isArray(homes) ? homes : []) {
     if (typeof home?.id !== 'string' || !Array.isArray(home.modules)) {
       continue;
@@ -279,7 +287,7 @@ export function buildModel(gladys, homes, statuses = new Map(), seen = new Map()
       const ids = gladys.externalIds(DEVICE_TYPE, platformId(module.id));
       const status = statusById.get(module.id) ?? statusById.get(parentOf(module.id));
       const bridge = module.bridge ?? status?.bridge;
-      const features = featuresOf(ids, module, desc, seen, gangs);
+      const features = featuresOf(ids, module, desc, seen, gangs, kept);
       if (features.length === 0) {
         model.skipped.push({ id: module.id, type: module.type });
         continue;

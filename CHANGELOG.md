@@ -28,8 +28,12 @@ the notes of the version's GitHub Release.
   stop never waits); a command still waiting for the Netatmo request budget
   when Gladys expects the answer is refused and never sent later; a command
   that left without an answer is reported "sent, without confirmation" and
-  the state is read again. A position needs the state read from Netatmo and is
-  refused for a shutter that only opens, closes and stops.
+  the state is read again. Behaviour change for the Legrand shutters too: a
+  position is refused until a homestatus was read (after a restart), for a
+  module missing from the last read, and for a module whose step is 100 (it
+  only opens, closes and stops; it used to round to 0 or 100). After a stop,
+  the next command waits for the move still in flight.
+- A created device keeps all its features after a reconnection or a restart.
 - A command is acknowledged without waiting for its states to reach Gladys; an
   empty or missing value is refused instead of being read as 0.
 

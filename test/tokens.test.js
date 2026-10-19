@@ -148,3 +148,17 @@ test('invalid_scope: the code exchange is tried once more with the Legrand right
   );
   assert.equal(tokens.connected, false);
 });
+
+test('scopeRefused marks a retry failure, and a scope-less answer keeps the rights asked for', async () => {
+  const { netatmo, tokens } = setup();
+  netatmo.appScopes = ['read_magellan'];
+  await assert.rejects(
+    tokens.exchange(GOOD_CODE, 'https://gladys.example/cb'),
+    (err) => err.scopeRefused === true,
+  );
+  netatmo.appScopes = ['read_magellan', 'write_magellan'];
+  netatmo.grantedScope = [];
+  await tokens.exchange(GOOD_CODE, 'https://gladys.example/cb');
+  assert.deepEqual(tokens.scope, ['read_magellan', 'write_magellan']);
+  assert.equal(tokens.lacks('write_bubendorff'), true, 'Bubendorff commands refused up front');
+});

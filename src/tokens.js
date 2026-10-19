@@ -190,6 +190,7 @@ export class TokenManager {
         { timeout: this.timeout },
       );
     let tokens;
+    let granted = scopes;
     try {
       tokens = await ask(scopes);
     } catch (err) {
@@ -200,7 +201,15 @@ export class TokenManager {
       this.logger?.info(
         'Netatmo refused the Bubendorff rights: linking with the Legrand ones only',
       );
-      tokens = await ask(LEGRAND_SCOPES);
+      granted = LEGRAND_SCOPES;
+      try {
+        tokens = await ask(LEGRAND_SCOPES);
+      } catch (retryErr) {
+        // Whatever the retry answered (a single-use code may be refused): the
+        // Bubendorff rights were refused, the next Connect goes without them.
+        retryErr.scopeRefused = true;
+        throw retryErr;
+      }
     }
     if (!tokens.refreshToken) {
       throw new NetatmoError('Netatmo sent no refresh token', { kind: ERROR_KINDS.API });
@@ -211,7 +220,9 @@ export class TokenManager {
       refreshToken: tokens.refreshToken,
       expiresAt: this.now() + tokens.expiresIn * 1000,
       clientId: this.app.clientId,
-      scope: tokens.scope,
+      // No scope in the answer: the rights asked for, so that a Legrand-only
+      // link is never taken for one with the Bubendorff rights.
+      scope: tokens.scope.length > 0 ? tokens.scope : [...granted],
     };
     await this.save();
     return this.state;

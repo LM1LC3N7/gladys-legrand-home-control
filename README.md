@@ -39,8 +39,11 @@ write_bubendorff`, an anti-CSRF state), `onOAuthCallback` checks the state
   the Bubendorff ones keeps the Legrand control, and the status asks to connect
   again only when Bubendorff shutters are seen without `write_bubendorff`. An
   `invalid_scope` answer (an app without the Bubendorff rights) retries the
-  exchange once with the Legrand rights; a refused authorization page makes the
-  next click ask for them only, once. The tokens
+  exchange once with the Legrand rights (and so does the next click, even when
+  the retry is refused). Gladys relays no return without a code, so a refused
+  authorization page is seen as a Bubendorff authorization that never came
+  back: the next click asks for the Legrand rights only, once (the click after
+  asks for all of them again). The tokens
   live in the Gladys config under keys outside the `config_schema` (never
   shown). Netatmo rotates the refresh token at every refresh: refreshes are
   single-flight and saved at once.

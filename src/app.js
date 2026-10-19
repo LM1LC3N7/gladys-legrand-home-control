@@ -200,9 +200,26 @@ export class LegrandApp {
         this.oauthStates.delete(state);
       }
     }
-    const state = this.randomId();
-    const scopes = this.legrandOnlyNext ? LEGRAND_SCOPES : SCOPES;
+    // Gladys never relays a return without a code: an authorization page that
+    // refused the Bubendorff rights (invalid_scope) shows up as an earlier
+    // Bubendorff authorization that never came back. That click, and the one
+    // after a Netatmo `invalid_scope` at the exchange, ask for the Legrand
+    // rights only, once each: every attempt is a user click, no loop.
+    const unanswered = [...this.oauthStates.values()].filter(
+      (e) => e.scopes.length > LEGRAND_SCOPES.length && !e.superseded,
+    );
+    const legrandOnly = this.legrandOnlyNext || unanswered.length > 0;
+    for (const entry of unanswered) {
+      entry.superseded = true;
+    }
     this.legrandOnlyNext = false;
+    const scopes = legrandOnly ? LEGRAND_SCOPES : SCOPES;
+    if (legrandOnly) {
+      this.logger.info(
+        'Asking Netatmo for the Legrand rights only (Bubendorff not granted before)',
+      );
+    }
+    const state = this.randomId();
     this.oauthStates.set(state, { expiresAt: now + TIMINGS.oauthStateTtl, redirectUri, scopes });
     return authorizeUrl({ clientId: this.config.clientId, redirectUri, state, scopes });
   }
@@ -216,23 +233,15 @@ export class LegrandApp {
     if (!pending || pending.expiresAt <= this.now()) {
       throw new Error('this authorization is unknown or expired: click Connect again');
     }
-    const askedBubendorff = pending.scopes.length > LEGRAND_SCOPES.length;
     if (typeof code !== 'string' || code === '') {
-      // Refused on the Netatmo page: maybe by the user, maybe `invalid_scope`
-      // (an app without the Bubendorff rights). The next click asks for the
-      // Legrand rights only, once: no loop, every attempt is a click.
-      if (askedBubendorff) {
-        this.legrandOnlyNext = true;
-        throw new Error(
-          'Netatmo sent no authorization code (refused, or your Netatmo app does not offer the Bubendorff rights): click Connect again, the next attempt asks for the Legrand rights only',
-        );
-      }
       throw new Error('Netatmo sent no authorization code');
     }
     try {
       await this.tokens.exchange(code, redirectUri || pending.redirectUri, pending.scopes);
     } catch (err) {
-      if (err?.kind === ERROR_KINDS.SCOPE && askedBubendorff) {
+      // Netatmo refused the Bubendorff rights, whatever the retry answered
+      // (a single-use code may be refused then): the next click asks without them.
+      if (err?.scopeRefused) {
         this.legrandOnlyNext = true;
       }
       this.logger.warn(`Linking the Netatmo account failed: ${err.message}`);
@@ -553,7 +562,18 @@ export class LegrandApp {
   async shutterCommand(route, value) {
     const started = this.now();
     const remaining = () => TIMINGS.commandAck - (this.now() - started);
-    let fields = commandFields(route, value, this.statusOf(route));
+    // Decided on the last state read from Netatmo, never on the values in memory.
+    const decide = () => {
+      const status = this.statusOf(route);
+      if (route.key === FEATURES.POSITION && !status && this.statuses.has(route.homeId)) {
+        commandFields(route, value, {}); // the value itself first
+        throw new Error(
+          'this shutter was missing from the last Netatmo read (unreachable?), try again in a minute',
+        );
+      }
+      return commandFields(route, value, status);
+    };
+    let fields = decide();
     if (!this.tokens.connected) {
       throw new Error('no Netatmo account is linked: click Connect in the configuration');
     }
@@ -564,15 +584,17 @@ export class LegrandApp {
       );
     }
     if (!isStop(fields)) {
-      const previous = this.shutterQueue.get(route.deviceId);
-      if (previous) {
+      // Waits for every command of the device still in flight, stops included;
+      // another command may have taken the turn meanwhile: wait again.
+      let previous;
+      while ((previous = this.shutterQueue.get(route.deviceId))) {
         if ((await this.within(previous, remaining())) === LATE) {
           throw new Error(
             'not sent: the previous command of this shutter is still waiting for Netatmo, try again',
           );
         }
         // Decided again on what Netatmo answered meanwhile.
-        fields = commandFields(route, value, this.statusOf(route));
+        fields = decide();
       }
     }
     const job = this.enqueue(route.homeId, moduleEntry(route, fields), { exclusive: true });
@@ -580,9 +602,14 @@ export class LegrandApp {
       () => undefined,
       () => undefined,
     );
-    this.shutterQueue.set(route.deviceId, settled);
-    settled.then(() => {
-      if (this.shutterQueue.get(route.deviceId) === settled) {
+    // Chained, never replaced: a stop sent while a move is in flight does not
+    // let the next command go before that move is answered.
+    const chain = Promise.all([this.shutterQueue.get(route.deviceId), settled]).then(
+      () => undefined,
+    );
+    this.shutterQueue.set(route.deviceId, chain);
+    chain.then(() => {
+      if (this.shutterQueue.get(route.deviceId) === chain) {
         this.shutterQueue.delete(route.deviceId);
       }
     });
@@ -682,6 +709,9 @@ export class LegrandApp {
       errors = await this.client.setState(homeId, () => [...batch.modules.values()], {
         onSend: () => {
           batch.left = true;
+        },
+        onRetry: () => {
+          batch.left = false;
         },
       });
     } catch (err) {

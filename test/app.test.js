@@ -492,20 +492,16 @@ test('an app without the Bubendorff rights: invalid_scope falls back to the Legr
   assert.equal(gladys.fake.connectionStatus.connected, true);
   assert.doesNotMatch(gladys.fake.connectionStatus.message.en, /Bubendorff|Read only/);
 
-  // Refused on the Netatmo page (no code): the next Connect asks for the Legrand rights, once.
+  // Refused on the Netatmo page: Gladys relays no return without a code, so the
+  // authorization never comes back. The next click asks for the Legrand rights, once.
   const scopeOf = async () =>
     new URL(
       (await gladys.fake.oauthAuthorizeUrl(OAUTH_FIELD, REDIRECT)).data.authorize_url,
     ).searchParams.get('scope');
   assert.equal(await scopeOf(), ALL_SCOPES);
-  const denied = await gladys.fake.oauthCallback(OAUTH_FIELD, {
-    state: 'state-2',
-    redirectUri: REDIRECT,
-  });
-  assert.equal(denied.success, false);
-  assert.match(denied.error, /Legrand rights only/);
-  assert.equal(await scopeOf(), 'read_magellan write_magellan');
+  assert.equal(await scopeOf(), 'read_magellan write_magellan', 'the first one never came back');
   assert.equal(await scopeOf(), ALL_SCOPES, 'one attempt only, no loop');
+  assert.equal(await scopeOf(), 'read_magellan write_magellan', 'a new click, a new attempt');
 });
 
 test('shutters: a command still waiting for the budget at the ack is withdrawn, never sent late', async (t) => {
@@ -617,4 +613,129 @@ test('shutters: the ack does not wait for the states to reach Gladys', async (t)
   t.mock.method(ctx.gladys, 'publishChangedStates', () => new Promise(() => {}));
   assert.deepEqual(await command(ctx, M.SHUTTER, 'state', 1), { success: true });
   assert.deepEqual(await command(ctx, M.OUTLET, 'on', 0), { success: true });
+});
+
+test('invalid_scope, then a refused single-use code: the next Connect skips the Bubendorff rights', async (t) => {
+  const ctx = await setup(t, { config: APP_CONFIG });
+  const { gladys, netatmo } = ctx;
+  let used = false;
+  const codeOnce = () => {
+    if (used) {
+      return answer(400, { error: 'invalid_grant' });
+    }
+    used = true;
+    return answer(400, { error: 'invalid_scope' });
+  };
+  netatmo.once((r) => r.path === '/oauth2/token', codeOnce);
+  netatmo.once((r) => r.path === '/oauth2/token', codeOnce);
+  await gladys.fake.oauthAuthorizeUrl(OAUTH_FIELD, REDIRECT);
+  const res = await gladys.fake.oauthCallback(OAUTH_FIELD, {
+    code: GOOD_CODE,
+    state: 'state-1',
+    redirectUri: REDIRECT,
+  });
+  assert.equal(res.success, false);
+  const next = new URL(
+    (await gladys.fake.oauthAuthorizeUrl(OAUTH_FIELD, REDIRECT)).data.authorize_url,
+  ).searchParams.get('scope');
+  assert.equal(next, 'read_magellan write_magellan');
+});
+
+test('shutters: a setstate refused for its token and replayed after a slow refresh never leaves after the ack', async (t) => {
+  const ctx = await setup(t);
+  await firstRead(ctx);
+  await create(ctx, M.SHUTTER);
+  ctx.netatmo.once(
+    (r) => r.path === '/api/setstate',
+    answer(403, { error: { code: 3, message: 'Access token expired' } }),
+  );
+  ctx.netatmo.once(
+    (r) => r.path === '/oauth2/token',
+    () => new Promise((resolve) => setTimeout(() => resolve(ctx.netatmo.issue()), 6000)),
+  );
+  const ack = ctx.gladys.fake.setValue(
+    deviceOf(ctx, M.SHUTTER),
+    featureOf(ctx, M.SHUTTER, 'state'),
+    1,
+  );
+  await ctx.tick(TIMINGS.commandBatch);
+  await ctx.run(TIMINGS.commandAck);
+  const result = await ack;
+  assert.equal(result.success, false);
+  assert.match(result.error, /^not sent in time/);
+  const atAck = setstates(ctx).length;
+  await ctx.run(10_000);
+  assert.equal(setstates(ctx).length, atAck, 'nothing sent after the ack');
+});
+
+test('shutters: after a stop, the next command waits for the move still in flight', async (t) => {
+  const ctx = await setup(t);
+  const { gladys, netatmo } = ctx;
+  await firstRead(ctx);
+  await create(ctx, M.LEVEL_SHUTTER);
+  let release;
+  const slow = new Promise((resolve) => {
+    release = resolve;
+  });
+  netatmo.once(
+    (r) => r.path === '/api/setstate',
+    () => slow.then(() => answer(200, { status: 'ok' })),
+  );
+  const device = deviceOf(ctx, M.LEVEL_SHUTTER);
+  const move = gladys.fake.setValue(device, featureOf(ctx, M.LEVEL_SHUTTER, 'position'), 80);
+  await ctx.tick(TIMINGS.commandBatch);
+  const stop = gladys.fake.setValue(device, featureOf(ctx, M.LEVEL_SHUTTER, 'state'), 0);
+  await ctx.tick(TIMINGS.commandBatch);
+  assert.deepEqual(await stop, { success: true }, 'the stop never waits');
+  await ctx.run(5000);
+  const close = gladys.fake.setValue(device, featureOf(ctx, M.LEVEL_SHUTTER, 'state'), -1);
+  await ctx.tick(TIMINGS.commandBatch);
+  await ctx.run(TIMINGS.commandAck);
+  assert.match((await close).error, /previous command of this shutter is still waiting/);
+  assert.equal(setstates(ctx).length, 2, 'the move and the stop only');
+  release();
+  await settle();
+  await move;
+  const after = gladys.fake.setValue(device, featureOf(ctx, M.LEVEL_SHUTTER, 'state'), -1);
+  await ctx.tick(TIMINGS.commandBatch);
+  assert.deepEqual(await after, { success: true }, 'free once the move is answered');
+});
+
+test('a created device never loses a feature: a reconnection with an unreadable module keeps it', async (t) => {
+  const ctx = await setup(t, { config: { ...LINKED, token_scope: ALL_SCOPES } });
+  const { gladys, netatmo } = ctx;
+  netatmo.bubendorff();
+  netatmo.module(M.SHUTTER)['target_position:step'] = 5; // an NLV calibrated for positions
+  await firstRead(ctx);
+  await create(ctx, B.SWING, M.SHUTTER);
+  assert.deepEqual(keysOf(discovered(ctx, M.SHUTTER)), ['state', 'position']);
+  for (const id of [B.SWING, M.SHUTTER]) {
+    const m = netatmo.module(id);
+    delete m['target_position:step'];
+  }
+  netatmo.status().body.errors = [{ id: B.SWING, code: 6 }];
+  await gladys.fake.oauthAuthorizeUrl(OAUTH_FIELD, REDIRECT);
+  await gladys.fake.oauthCallback(OAUTH_FIELD, {
+    code: GOOD_CODE,
+    state: 'state-1',
+    redirectUri: REDIRECT,
+  });
+  await ctx.run(15_000);
+  assert.deepEqual(keysOf(discovered(ctx, B.SWING)), ['state', 'position']);
+  assert.deepEqual(keysOf(discovered(ctx, M.SHUTTER)), ['state', 'position']);
+});
+
+test('a position for a shutter missing from the last read says so', async (t) => {
+  const ctx = await setup(t);
+  await firstRead(ctx);
+  await create(ctx, M.LEVEL_SHUTTER);
+  const modules = ctx.netatmo.status().body.home.modules;
+  modules.splice(
+    modules.findIndex((m) => m.id === M.LEVEL_SHUTTER),
+    1,
+  );
+  await ctx.run(60_000);
+  const res = await command(ctx, M.LEVEL_SHUTTER, 'position', 50);
+  assert.equal(res.success, false);
+  assert.match(res.error, /missing from the last Netatmo read/);
 });
