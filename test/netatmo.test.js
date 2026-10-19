@@ -12,7 +12,7 @@ import {
 import { HOME_ID, M, tokenAnswer } from './fixtures/netatmo.js';
 import { CLIENT, GOOD_CODE, answer, fakeNetatmo } from './helpers/fakeNetatmo.js';
 
-test('the authorization URL asks for the Home + Control scopes, space-separated', () => {
+test('the authorization URL asks for the Home + Control and Bubendorff scopes, space-separated', () => {
   const url = new URL(
     authorizeUrl({
       clientId: 'abc',
@@ -22,9 +22,12 @@ test('the authorization URL asks for the Home + Control scopes, space-separated'
   );
   assert.equal(url.origin + url.pathname, 'https://api.netatmo.com/oauth2/authorize');
   assert.equal(url.searchParams.get('client_id'), 'abc');
-  assert.equal(url.searchParams.get('scope'), 'read_magellan write_magellan');
+  assert.equal(
+    url.searchParams.get('scope'),
+    'read_magellan write_magellan read_bubendorff write_bubendorff',
+  );
   assert.equal(url.searchParams.get('state'), 'state-1');
-  assert.match(url.search, /scope=read_magellan%20write_magellan/, 'no "+" for the space');
+  assert.match(url.search, /scope=read_magellan%20write_magellan%20read_bubendorff/, 'no "+"');
   assert.equal(
     url.searchParams.get('redirect_uri'),
     'https://gladys.example/dashboard/integration/device/external/x/oauth-callback',
@@ -159,4 +162,34 @@ test('a usage limit pauses the limiter for the Retry-After delay', async () => {
   assert.deepEqual(calls.paused, [1000 + 90_000]);
   netatmo.once(() => true, answer(200, 'not json'));
   await assert.rejects(api.homesData(), (err) => err.kind === ERROR_KINDS.SERVER);
+});
+
+test('a setstate error says whether the request may have reached Netatmo', async () => {
+  const netatmo = fakeNetatmo();
+  netatmo.seed(1);
+  const { api } = client(netatmo);
+  const entry = [{ id: M.SHUTTER, target_position: 100 }];
+  netatmo.once(() => true, answer(503, { error: { code: 1, message: 'Unavailable' } }));
+  await assert.rejects(api.setState(HOME_ID, entry), (err) => err.unconfirmed === true);
+  netatmo.once(() => true, answer(200, 'not json'));
+  await assert.rejects(api.setState(HOME_ID, entry), (err) => err.unconfirmed === true);
+  netatmo.once(
+    () => true,
+    () => {
+      throw Object.assign(new Error('aborted'), { name: 'TimeoutError' });
+    },
+  );
+  await assert.rejects(api.setState(HOME_ID, entry), (err) => err.unconfirmed === true);
+  netatmo.once(() => true, answer(429, { error: { code: 26, message: 'User usage reached' } }));
+  await assert.rejects(api.setState(HOME_ID, entry), (err) => err.unconfirmed === false);
+  netatmo.offline = true;
+  await assert.rejects(api.setState(HOME_ID, entry), (err) => err.unconfirmed === false);
+  netatmo.offline = false;
+
+  // Every command withdrawn before the request left: nothing is sent.
+  const before = netatmo.count('/api/setstate');
+  let sent = 0;
+  assert.equal(await api.setState(HOME_ID, () => [], { onSend: () => (sent += 1) }), null);
+  assert.equal(netatmo.count('/api/setstate'), before);
+  assert.equal(sent, 0);
 });

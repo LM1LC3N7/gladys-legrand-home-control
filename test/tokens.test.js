@@ -114,3 +114,37 @@ test('a failed save keeps the tokens in memory and is retried', async (t) => {
   assert.equal(tokens.unsaved, false);
   assert.equal(gladys.fake.config.refresh_token, tokenAnswer(1).refresh_token);
 });
+
+test('the Bubendorff rights are optional: a Legrand-only token keeps its control', () => {
+  const { tokens } = setup({
+    access_token: 'a',
+    refresh_token: 'r',
+    token_expires_at: 1_760_000_000_000 + 3_600_000,
+    token_client_id: CLIENT.id,
+    token_scope: 'read_magellan write_magellan',
+  });
+  assert.equal(tokens.hasAllScopes, true, 'not read-only');
+  assert.equal(tokens.lacks('write_bubendorff'), true);
+  assert.equal(tokens.lacks('write_magellan'), false);
+  const unknown = setup({ refresh_token: 'r', token_client_id: CLIENT.id }).tokens;
+  assert.equal(unknown.hasAllScopes, true);
+  assert.equal(unknown.lacks('write_bubendorff'), false, 'unknown scope: no warning');
+});
+
+test('invalid_scope: the code exchange is tried once more with the Legrand rights only', async () => {
+  const { netatmo, tokens } = setup();
+  netatmo.appScopes = ['read_magellan'];
+  await assert.rejects(
+    tokens.exchange(GOOD_CODE, 'https://gladys.example/cb'),
+    (err) => err.kind === ERROR_KINDS.SCOPE,
+  );
+  assert.deepEqual(
+    tokenRequests(netatmo).map((r) => r.body.scope),
+    [
+      'read_magellan write_magellan read_bubendorff write_bubendorff',
+      'read_magellan write_magellan',
+    ],
+    'two attempts, never more',
+  );
+  assert.equal(tokens.connected, false);
+});

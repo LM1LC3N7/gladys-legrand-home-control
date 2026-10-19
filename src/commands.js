@@ -42,10 +42,14 @@ export const NOTHING_TO_MODIFY = 23;
  * @param {object} [status] - The last status of the module (shutter step).
  */
 export function commandFields(route, value, status) {
-  const v = Number(value);
-  if (!Number.isFinite(v)) {
+  // Strict: null, '' or a boolean never stand for 0 (0 closes a shutter).
+  const valid =
+    (typeof value === 'number' || (typeof value === 'string' && value.trim() !== '')) &&
+    Number.isFinite(Number(value));
+  if (!valid) {
     throw new Error(`invalid value ${value}`);
   }
+  const v = Number(value);
   switch (route.key) {
     case FEATURES.ON:
       return { on: v >= 1 };
@@ -61,9 +65,16 @@ export function commandFields(route, value, status) {
       return { target_position: target };
     }
     case FEATURES.POSITION: {
-      const step = Number(status?.['target_position:step'] ?? status?.target_position_step);
+      // Decided on the last state read from Netatmo, never on a value kept in memory.
+      if (!status) {
+        throw new Error('the state of this shutter was not read yet, try again in a minute');
+      }
+      const step = Number(status['target_position:step'] ?? status.target_position_step);
+      if (Number.isFinite(step) && step >= 100) {
+        throw new Error('this shutter only opens, closes and stops (no position)');
+      }
       let position = percent(v);
-      if (Number.isFinite(step) && step > 1 && step <= 100) {
+      if (Number.isFinite(step) && step > 1) {
         position = Math.min(100, Math.round(position / step) * step);
       }
       return { target_position: position };
@@ -72,6 +83,13 @@ export function commandFields(route, value, status) {
       throw new Error(`${route.key} is read-only`);
   }
 }
+
+/** Whether a command drives a shutter (serialized per device, never sent late). */
+export const isShutterCommand = (route) =>
+  route.key === FEATURES.STATE || route.key === FEATURES.POSITION;
+
+/** Whether a command stops a shutter (never waits behind the other commands of the device). */
+export const isStop = (fields) => fields.target_position === SHUTTER_TARGETS[COVER_STATE.STOP];
 
 /** The module entry of a setstate request. */
 export function moduleEntry(route, fields) {

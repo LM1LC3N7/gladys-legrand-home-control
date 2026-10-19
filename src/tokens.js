@@ -10,7 +10,7 @@
 // ones for the same app (a save may have failed while Gladys was unreachable).
 // -----------------------------------------------------------------------------
 
-import { SCOPES, TIMINGS, TOKEN_KEYS } from './constants.js';
+import { LEGRAND_SCOPES, SCOPES, TIMINGS, TOKEN_KEYS } from './constants.js';
 import { ERROR_KINDS, NetatmoError, requestToken } from './netatmo.js';
 
 /** The tokens stored in the config, or null. */
@@ -80,10 +80,19 @@ export class TokenManager {
     return this.state?.scope ?? [];
   }
 
-  /** Whether the authorization covers every Home + Control right (unknown scope: assumed). */
+  /**
+   * Whether the authorization covers every Home + Control (Legrand) right
+   * (unknown scope: assumed). The Bubendorff rights are optional, see `lacks`.
+   */
   get hasAllScopes() {
     const scope = this.scope;
-    return scope.length === 0 || SCOPES.every((s) => scope.includes(s));
+    return scope.length === 0 || LEGRAND_SCOPES.every((s) => scope.includes(s));
+  }
+
+  /** Whether the authorization is known to miss this right (unknown scope: never). */
+  lacks(right) {
+    const scope = this.scope;
+    return scope.length > 0 && !scope.includes(right);
   }
 
   /** A valid access token, refreshed when it expires within the margin. */
@@ -161,20 +170,38 @@ export class TokenManager {
     await this.save();
   }
 
-  /** Exchanges the authorization code the provider sent back for tokens. */
-  async exchange(code, redirectUri) {
-    const tokens = await requestToken(
-      this.fetch,
-      {
-        grant_type: 'authorization_code',
-        client_id: this.app.clientId,
-        client_secret: this.app.clientSecret,
-        code,
-        redirect_uri: redirectUri,
-        scope: SCOPES.join(' '),
-      },
-      { timeout: this.timeout },
-    );
+  /**
+   * Exchanges the authorization code the provider sent back for tokens. When
+   * Netatmo answers `invalid_scope` (an app without the Bubendorff rights), the
+   * exchange is tried once more with the Legrand rights only, never more.
+   */
+  async exchange(code, redirectUri, scopes = SCOPES) {
+    const ask = (list) =>
+      requestToken(
+        this.fetch,
+        {
+          grant_type: 'authorization_code',
+          client_id: this.app.clientId,
+          client_secret: this.app.clientSecret,
+          code,
+          redirect_uri: redirectUri,
+          scope: list.join(' '),
+        },
+        { timeout: this.timeout },
+      );
+    let tokens;
+    try {
+      tokens = await ask(scopes);
+    } catch (err) {
+      const narrower = scopes.length > LEGRAND_SCOPES.length;
+      if (err.kind !== ERROR_KINDS.SCOPE || !narrower) {
+        throw err;
+      }
+      this.logger?.info(
+        'Netatmo refused the Bubendorff rights: linking with the Legrand ones only',
+      );
+      tokens = await ask(LEGRAND_SCOPES);
+    }
     if (!tokens.refreshToken) {
       throw new NetatmoError('Netatmo sent no refresh token', { kind: ERROR_KINDS.API });
     }

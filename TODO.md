@@ -26,6 +26,10 @@ up to date at the end of every milestone.
       batched setstate commands, transport badges, test button, manifest,
       docs en/fr. 66 unit tests against a fake Netatmo; never run against a
       real installation yet.
+- [x] **Bubendorff iDiamant shutters** (2026-10-19): NBR, NBO, NBS as
+      shutters through the same API, optional Bubendorff rights, invalid_scope
+      fallback, shutter command rules (see Decisions). Never tested with real
+      Bubendorff shutters.
 - [ ] **Milestone 2 — real installation**: a tester with a Home + Control
       gateway; record their homesdata/homestatus (ids anonymized) as fixtures;
       check the points listed below; fix what differs.
@@ -54,14 +58,52 @@ up to date at the end of every milestone.
 - The per-app limit (2 requests per 10 s with one user) in practice, and the
   error codes when it is exceeded (403 code 26 or 429 code 28/29).
 - The `errors` of homestatus when the gateway is offline (code 6 per module?).
+- Bubendorff: the authorization page with the four rights; what an app without
+  them answers (`invalid_scope` at the redirect or the exchange, or rights
+  silently dropped from the token); homesdata without `read_bubendorff`;
+  NBR/NBO/NBS `current_position` and step in practice (always 100?); setstate
+  with the NBG as bridge; the favourite position (-2) as a future button.
 
 ## Decisions
 
 - Cloud only (`transports: ["cloud"]`): Netatmo exposes no local API.
 - Each user creates their own Netatmo app (client ID + secret in the config):
   no shared app, no secret in the image.
-- Scopes: `read_magellan write_magellan` only (Legrand wiring devices and
-  electrical panel). BTicino (mhs1, mx) and Bubendorff are out of scope.
+- Scopes: `read_magellan write_magellan` (Legrand wiring devices and
+  electrical panel), plus `read_bubendorff write_bubendorff` since the
+  Bubendorff iDiamant shutters (2026-10-19, a user request). BTicino (mhs1,
+  mx) stays out of scope.
+- Bubendorff (2026-10-19): only the Legrand rights are required
+  (`hasAllScopes`, "read only" unchanged); a token without the Bubendorff
+  rights keeps the Legrand control, Bubendorff commands are refused before any
+  request while the token is known to lack `write_bubendorff`, and the status
+  adds "click Connect again to add Bubendorff" only when Bubendorff devices
+  exist. An unknown token scope never warns. `invalid_scope` at the code
+  exchange retries once with the Legrand rights only; a callback without a code
+  after asking for Bubendorff makes the NEXT Connect ask for the Legrand rights
+  only, once (every attempt is a user click: no loop).
+- Bubendorff types from pyatmo (MIT, THIRD_PARTY_NOTICES.md): NBG gateway (no
+  device), NBR roller, NBO orientable, NBS swing shutters, all `shutter`
+  (never `switch`). A position feature only when the status reports a
+  `target_position:step` (or `target_position_step`) under 100; at 100 the
+  module only opens, closes and stops and `current_position` echoes the last
+  command (pyatmo, seen on BTicino). Values: 100 open, 0 close, -1 stop; -2
+  (favourite position) is not offered. No guess for unknown `NB*` types
+  (Netatmo uses the prefix for other products). Devices are `module:<id>` like
+  the Legrand ones; the model reads `Bubendorff <label> (<type>)`, the Legrand
+  models are unchanged.
+- Shutter commands (both brands, 2026-10-19): serialized per device (a stop
+  never waits, and replaces a pending command of the same module in the
+  batch); the position step is decided on the last homestatus read (never on
+  the values in memory), a position is refused without a read status or with a
+  step of 100; a command not sent when the ack is due (4 s) is withdrawn from
+  its batch and refused, never sent later; one whose request left without an
+  answer is refused as "sent, without confirmation" and the home is read again.
+  `NetatmoError.unconfirmed` marks timeouts, cut connections, 5xx and non-JSON
+  answers (DNS or refused connections are "not sent"). Other commands keep the
+  ack-then-send-later rule. The ack never waits for the states publication.
+- Strict command values: null, '' or a boolean are refused (they never stand
+  for 0, which closes a shutter).
 - One Gladys device per module; NLIS gangs are devices of their own, NLY
   phases are features of the meter. The gateway is no device: its
   reachability is its modules'.

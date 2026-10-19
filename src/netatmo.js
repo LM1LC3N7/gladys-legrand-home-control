@@ -27,15 +27,31 @@ export const ERROR_KINDS = {
 };
 
 export class NetatmoError extends Error {
-  constructor(message, { kind = ERROR_KINDS.API, status, code, retryAfter } = {}) {
+  constructor(message, { kind = ERROR_KINDS.API, status, code, retryAfter, unconfirmed } = {}) {
     super(message);
     this.name = 'NetatmoError';
     this.kind = kind;
     this.status = status;
     this.code = code;
     this.retryAfter = retryAfter;
+    /**
+     * True when the request may have reached Netatmo and been applied
+     * (timeout, connection cut, 5xx, answer that is not JSON): a command is
+     * then "sent, without confirmation", never "not sent".
+     */
+    this.unconfirmed = unconfirmed === true;
   }
 }
+
+/** Network failures that prove the request never left (name resolution, refused connection). */
+const NOT_SENT_CODES = new Set([
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'ECONNREFUSED',
+  'ENETUNREACH',
+  'EHOSTUNREACH',
+  'UND_ERR_CONNECT_TIMEOUT',
+]);
 
 /** The kind of an API error answer (HTTP status + `error.code`, see the Netatmo glossary). */
 export function classifyApiError(status, code) {
@@ -193,21 +209,39 @@ export class NetatmoClient {
     };
   }
 
-  /** Changes the state of modules of one home; resolves the per-module `errors`. */
-  async setState(homeId, modules) {
+  /**
+   * Changes the state of modules of one home; resolves the per-module `errors`.
+   * `modules` may be a function called at the last moment, once the request
+   * budget and the token are there: an empty list then sends nothing (every
+   * command was withdrawn) and resolves null. `onSend` is called right before
+   * the request leaves.
+   */
+  async setState(homeId, modules, { onSend } = {}) {
     const data = await this.call('POST', 'setstate', {
-      json: { home: { id: homeId, modules } },
+      json: () => {
+        const list = typeof modules === 'function' ? modules() : modules;
+        return list.length > 0 ? { home: { id: homeId, modules: list } } : null;
+      },
       priority: PRIORITY.COMMAND,
+      onSend,
     });
+    if (data === null) {
+      return null;
+    }
     return Array.isArray(data?.body?.errors) ? data.body.errors : [];
   }
 
-  async call(method, endpoint, { query, json, priority = PRIORITY.BACKGROUND } = {}) {
+  async call(method, endpoint, { query, json, priority = PRIORITY.BACKGROUND, onSend } = {}) {
     for (let attempt = 0; ; attempt += 1) {
       await this.limiter.acquire(priority);
       const token = await this.tokens.accessToken();
+      const body = typeof json === 'function' ? json() : json;
+      if (body === null) {
+        return null;
+      }
       try {
-        return await this.send(method, endpoint, { query, json, token });
+        onSend?.();
+        return await this.send(method, endpoint, { query, json: body, token });
       } catch (err) {
         if (err.kind === ERROR_KINDS.AUTH && attempt === 0) {
           await this.tokens.refresh(token);
@@ -237,11 +271,22 @@ export class NetatmoClient {
         signal: AbortSignal.timeout(this.timeout),
       });
     } catch (err) {
-      throw new NetatmoError(`Netatmo is unreachable (${reasonOf(err)})`, {
+      const reason = reasonOf(err);
+      throw new NetatmoError(`Netatmo is unreachable (${reason})`, {
         kind: ERROR_KINDS.NETWORK,
+        unconfirmed: !NOT_SENT_CODES.has(reason),
       });
     }
-    const data = await readJson(response);
+    let data;
+    try {
+      data = await readJson(response);
+    } catch (err) {
+      // The answer was cut while it was read: the request did reach Netatmo.
+      throw new NetatmoError(`Netatmo answer to ${endpoint} cut (${reasonOf(err)})`, {
+        kind: ERROR_KINDS.NETWORK,
+        unconfirmed: true,
+      });
+    }
     if (!response.ok) {
       const code = typeof data?.error?.code === 'number' ? data.error.code : undefined;
       const message = data?.error?.message ?? data?.error ?? response.statusText;
@@ -252,6 +297,7 @@ export class NetatmoClient {
           status: response.status,
           code,
           retryAfter: parseRetryAfter(response.headers?.get?.('retry-after')),
+          unconfirmed: response.status >= 500,
         },
       );
     }
@@ -259,6 +305,7 @@ export class NetatmoClient {
       throw new NetatmoError(`Netatmo answered ${endpoint} with a body that is not JSON`, {
         kind: ERROR_KINDS.SERVER,
         status: response.status,
+        unconfirmed: true,
       });
     }
     return data;

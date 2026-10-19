@@ -4,7 +4,14 @@
 // error answers of the glossary. No network.
 // -----------------------------------------------------------------------------
 
-import { HOMESDATA, HOMESTATUS, HOME_ID, tokenAnswer } from '../fixtures/netatmo.js';
+import {
+  BUBENDORFF_MODULES,
+  BUBENDORFF_STATUSES,
+  HOMESDATA,
+  HOMESTATUS,
+  HOME_ID,
+  tokenAnswer,
+} from '../fixtures/netatmo.js';
 
 const clone = (v) => structuredClone(v);
 
@@ -41,6 +48,16 @@ export function fakeNetatmo() {
     offline: false,
     /** API requests refused for their access token. */
     refused: 0,
+    /** The rights the Netatmo app offers (undefined: all); others answer invalid_scope. */
+    appScopes: undefined,
+    /** The scope the token answers carry (undefined: the fixture's). */
+    grantedScope: undefined,
+
+    /** Adds a Bubendorff iDiamant gateway and its shutters to the home. */
+    bubendorff() {
+      api.homesdata.body.homes[0].modules.push(...clone(BUBENDORFF_MODULES));
+      api.status().body.home.modules.push(...clone(BUBENDORFF_STATUSES));
+    },
 
     /** Gives the fake the tokens an earlier connection obtained. */
     seed(n = 1) {
@@ -67,7 +84,10 @@ export function fakeNetatmo() {
 
     issue() {
       api.issued += 1;
-      const tokens = tokenAnswer(api.issued);
+      const tokens = { ...tokenAnswer(api.issued) };
+      if (api.grantedScope) {
+        tokens.scope = api.grantedScope;
+      }
       api.validAccess = tokens.access_token;
       api.validRefresh = tokens.refresh_token;
       return answer(200, tokens);
@@ -124,6 +144,12 @@ export function fakeNetatmo() {
         return answer(400, { error: 'invalid_client' });
       }
       if (form.grant_type === 'authorization_code') {
+        const asked = String(form.scope ?? '')
+          .split(' ')
+          .filter(Boolean);
+        if (api.appScopes && asked.some((s) => !api.appScopes.includes(s))) {
+          return answer(400, { error: 'invalid_scope' });
+        }
         return form.code === GOOD_CODE ? api.issue() : answer(400, { error: 'invalid_grant' });
       }
       if (form.grant_type === 'refresh_token') {

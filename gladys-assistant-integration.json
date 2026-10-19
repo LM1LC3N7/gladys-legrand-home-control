@@ -3,8 +3,8 @@
   "type": "device",
   "name": "Legrand Home + Control",
   "description": {
-    "en": "Céliane and dooxie with Netatmo: lights, dimmers, outlets, shutters and energy meters.",
-    "fr": "Céliane et dooxie with Netatmo : éclairages, variateurs, prises, volets et compteurs."
+    "en": "Céliane, dooxie with Netatmo and Bubendorff iDiamant: lights, outlets, shutters, meters.",
+    "fr": "Céliane, dooxie with Netatmo et Bubendorff iDiamant : éclairages, prises, volets, compteurs."
   },
   "version": "0.1.1",
   "docker_image": "ghcr.io/lm1lc3n7/gladys-legrand-home-control:0.1.1",
@@ -21,8 +21,8 @@
         "fr": "Votre installation Legrand Home + Control"
       },
       "description": {
-        "en": "Control the Céliane with Netatmo and dooxie with Netatmo modules of your Home + Control gateway through the Netatmo cloud: lights and dimmers, outlets, contactors, roller shutters and energy meters. 1. Sign in on dev.netatmo.com with your Home + Control account and create an app. 2. In its Redirect URI field, paste the redirect URI Gladys shows for the Connect button below. 3. Copy the client ID and the client secret of the app here and save. 4. Click Connect and accept the Home + Control rights. Unofficial integration, not affiliated with Legrand or Netatmo.",
-        "fr": "Pilotez les modules Céliane with Netatmo et dooxie with Netatmo de votre passerelle Home + Control via le cloud Netatmo : éclairages et variateurs, prises, contacteurs, volets roulants et compteurs d'énergie. 1. Connectez-vous sur dev.netatmo.com avec votre compte Home + Control et créez une application. 2. Dans son champ Redirect URI, collez l'URI de redirection que Gladys affiche pour le bouton Connecter ci-dessous. 3. Copiez ici le client ID et le client secret de l'application et enregistrez. 4. Cliquez sur Connecter et acceptez les droits Home + Control. Intégration non officielle, sans lien avec Legrand ni Netatmo."
+        "en": "Control the Céliane with Netatmo and dooxie with Netatmo modules of your Home + Control gateway through the Netatmo cloud: lights and dimmers, outlets, contactors, roller shutters and energy meters; and the Bubendorff iDiamant with Netatmo shutters (never tested with real Bubendorff shutters). 1. Sign in on dev.netatmo.com with your Home + Control or iDiamant account and create an app. 2. In its Redirect URI field, paste the redirect URI Gladys shows for the Connect button below. 3. Copy the client ID and the client secret of the app here and save. 4. Click Connect and accept the Home + Control and Bubendorff rights. Unofficial integration, not affiliated with Legrand, Bubendorff or Netatmo.",
+        "fr": "Pilotez les modules Céliane with Netatmo et dooxie with Netatmo de votre passerelle Home + Control via le cloud Netatmo : éclairages et variateurs, prises, contacteurs, volets roulants et compteurs d'énergie ; et les volets Bubendorff iDiamant with Netatmo (jamais testé avec de vrais volets Bubendorff). 1. Connectez-vous sur dev.netatmo.com avec votre compte Home + Control ou iDiamant et créez une application. 2. Dans son champ Redirect URI, collez l'URI de redirection que Gladys affiche pour le bouton Connecter ci-dessous. 3. Copiez ici le client ID et le client secret de l'application et enregistrez. 4. Cliquez sur Connecter et acceptez les droits Home + Control et Bubendorff. Intégration non officielle, sans lien avec Legrand, Bubendorff ni Netatmo."
       },
       "links": [
         {
@@ -68,8 +68,8 @@
       "type": "oauth2",
       "label": { "en": "Netatmo account", "fr": "Compte Netatmo" },
       "description": {
-        "en": "Save the client ID and the client secret first, then connect: Netatmo asks you to sign in and to accept the Home + Control rights (read_magellan, write_magellan).",
-        "fr": "Enregistrez d'abord le client ID et le client secret, puis connectez-vous : Netatmo vous demande de vous identifier et d'accepter les droits Home + Control (read_magellan, write_magellan)."
+        "en": "Save the client ID and the client secret first, then connect: Netatmo asks you to sign in and to accept the Home + Control rights (read_magellan, write_magellan) and the Bubendorff ones (read_bubendorff, write_bubendorff). Linked before? Your Legrand modules keep working; connect again only to add Bubendorff.",
+        "fr": "Enregistrez d'abord le client ID et le client secret, puis connectez-vous : Netatmo vous demande de vous identifier et d'accepter les droits Home + Control (read_magellan, write_magellan) et Bubendorff (read_bubendorff, write_bubendorff). Déjà lié ? Vos modules Legrand continuent de fonctionner ; reconnectez-vous seulement pour ajouter Bubendorff."
       }
     },
     {

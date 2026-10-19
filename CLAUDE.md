@@ -10,9 +10,10 @@ A Gladys Assistant **external integration** of type `device`: a Node.js
 service (Node 22+, ESM, no build step) in its own sandboxed Docker container,
 talking to Gladys through `@gladysassistant/integration-sdk` (v0.15). It links
 the user's Legrand Home + Control account (Céliane with Netatmo, dooxie with
-Netatmo) through the **Netatmo Connect API** with OAuth2, polls the homes and
-turns the modules into Gladys devices it can control. Unofficial, not
-affiliated with Legrand or Netatmo.
+Netatmo) and the Bubendorff iDiamant with Netatmo shutters through the
+**Netatmo Connect API** with OAuth2, polls the homes and turns the modules
+into Gladys devices it can control. Unofficial, not affiliated with Legrand,
+Bubendorff or Netatmo.
 
 ## Commands
 
@@ -72,6 +73,15 @@ test/helpers/       a fake Netatmo behind `fetch`; Gladys is the SDK's fake
   writable. The integration only talks to `api.netatmo.com` (cloud).
 - Gladys rate limits: 300 states/min (`StatePublisher` keeps 250).
 - Never log or put in a status message a token, the client secret or a code.
+- **Rights**: only `read_magellan write_magellan` are required; the Bubendorff
+  ones are asked but optional (`hasAllScopes` ignores them). Never make a
+  token without them read-only for Legrand.
+- **Shutter commands** (both brands): one at a time per device, a stop never
+  waits; never sent after the ack (withdrawn instead); "sent, without
+  confirmation" only when the request may have reached Netatmo
+  (`NetatmoError.unconfirmed`); the ack never awaits the states publication.
+- Bubendorff and pyatmo-derived logic: credit in `THIRD_PARTY_NOTICES.md`
+  (copied into the image with `LICENSE`).
 - Tests never touch the network: `test/helpers/fakeNetatmo.js` plays Netatmo.
 - Code, comments, README in English; `docs/en.md` and `docs/fr.md` kept in sync.
 - **Changelog**: every user-visible change adds a line under `## [Unreleased]`;

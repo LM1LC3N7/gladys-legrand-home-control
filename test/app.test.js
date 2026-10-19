@@ -12,7 +12,7 @@ import { LegrandApp } from '../src/app.js';
 import { ACTIONS, OAUTH_FIELD, TIMINGS } from '../src/constants.js';
 import { platformId } from '../src/devices.js';
 import { registerHandlers } from '../src/handlers.js';
-import { HOME_ID, M, tokenAnswer } from './fixtures/netatmo.js';
+import { B, HOME_ID, M, tokenAnswer } from './fixtures/netatmo.js';
 import { CLIENT, GOOD_CODE, answer, fakeNetatmo, settle } from './helpers/fakeNetatmo.js';
 
 const NOW = 1_760_000_000_000;
@@ -94,7 +94,10 @@ test('Connect: the authorization URL, the state check, the tokens stored off-sch
   const url = new URL(first.data.authorize_url);
   assert.equal(url.searchParams.get('client_id'), CLIENT.id);
   assert.equal(url.searchParams.get('redirect_uri'), REDIRECT);
-  assert.equal(url.searchParams.get('scope'), 'read_magellan write_magellan');
+  assert.equal(
+    url.searchParams.get('scope'),
+    'read_magellan write_magellan read_bubendorff write_bubendorff',
+  );
   assert.equal(url.searchParams.get('state'), 'state-1');
 
   const forged = await gladys.fake.oauthCallback(OAUTH_FIELD, {
@@ -128,7 +131,7 @@ test('Connect: the authorization URL, the state check, the tokens stored off-sch
     client_secret: CLIENT.secret,
     code: GOOD_CODE,
     redirect_uri: REDIRECT,
-    scope: 'read_magellan write_magellan',
+    scope: 'read_magellan write_magellan read_bubendorff write_bubendorff',
   });
   assert.equal(gladys.fake.config.refresh_token, tokenAnswer(1).refresh_token);
   assert.equal(gladys.fake.config.token_client_id, CLIENT.id);
@@ -164,6 +167,7 @@ test('states are sent for the created devices only, the last values at creation'
   assert.equal(netatmo.count('/api/homestatus'), 1);
   assert.equal(gladys.fake.discoveredDevices.length, 14);
   assert.equal(gladys.fake.states.length, 0);
+  assert.doesNotMatch(gladys.fake.connectionStatus.message.en, /Bubendorff|Read only/);
 
   await create(ctx, M.OUTLET, M.THREE_PHASE);
   assert.equal(gladys.fake.lastState(feat(M.OUTLET, 'on')), 1);
@@ -392,4 +396,225 @@ test('the test button, the scan and a client ID change', async (t) => {
   assert.match(gladys.fake.connectionStatus.message.en, /Click Connect/);
   const notLinked = await gladys.fake.action(ACTIONS.TEST, {});
   assert.match(notLinked.data.message.en, /Click Connect/);
+});
+
+// --- Bubendorff iDiamant -------------------------------------------------------
+
+const ALL_SCOPES = 'read_magellan write_magellan read_bubendorff write_bubendorff';
+const setstates = (ctx) => ctx.netatmo.requests.filter((r) => r.path === '/api/setstate');
+const discovered = (ctx, id) =>
+  ctx.gladys.fake.discoveredDevices.find((d) => d.external_id === dev(id));
+const keysOf = (device) => device.features.map((f) => f.external_id.split(':').at(-1));
+
+test('Bubendorff iDiamant: shutters (never switches), a position only when the module gives one', async (t) => {
+  const ctx = await setup(t, { config: { ...LINKED, token_scope: ALL_SCOPES } });
+  const { gladys } = ctx;
+  ctx.netatmo.bubendorff();
+  await firstRead(ctx);
+  assert.equal(gladys.fake.discoveredDevices.length, 17, 'three shutters, the NBG is no device');
+  assert.equal(discovered(ctx, B.GATEWAY), undefined);
+  const roller = discovered(ctx, B.ROLLER);
+  assert.equal(roller.model, 'Bubendorff Roller shutter (NBR)');
+  assert.deepEqual(keysOf(roller), ['state'], 'step 100: open, close, stop only');
+  assert.deepEqual(keysOf(discovered(ctx, B.ORIENTABLE)), ['state']);
+  assert.deepEqual(keysOf(discovered(ctx, B.SWING)), ['state', 'position']);
+  for (const id of [B.ROLLER, B.ORIENTABLE, B.SWING]) {
+    for (const f of discovered(ctx, id).features) {
+      assert.equal(f.category, 'shutter', `${id} ${f.external_id}`);
+    }
+  }
+  assert.ok(
+    roller.params.some((p) => p.name === 'NETATMO_BRIDGE_ID' && p.value === B.GATEWAY),
+    'the NBG is the bridge',
+  );
+  assert.doesNotMatch(gladys.fake.connectionStatus.message.en, /Bubendorff/);
+
+  await create(ctx, B.ROLLER, B.ORIENTABLE, B.SWING);
+  assert.equal(gladys.fake.lastState(feat(B.ROLLER, 'state')), -1);
+  assert.equal(gladys.fake.lastState(feat(B.ORIENTABLE, 'state')), 1);
+  assert.equal(gladys.fake.lastState(feat(B.SWING, 'position')), 30);
+  assert.equal(gladys.fake.transports.at(-1).transport, 'cloud');
+
+  assert.deepEqual(await command(ctx, B.ROLLER, 'state', 1), { success: true });
+  assert.deepEqual(await command(ctx, B.ORIENTABLE, 'state', 0), { success: true });
+  assert.deepEqual(await command(ctx, B.SWING, 'position', 55), { success: true });
+  assert.deepEqual(
+    setstates(ctx).map((r) => r.body.home.modules),
+    [
+      [{ id: B.ROLLER, bridge: B.GATEWAY, target_position: 100 }],
+      [{ id: B.ORIENTABLE, bridge: B.GATEWAY, target_position: -1 }],
+      [{ id: B.SWING, bridge: B.GATEWAY, target_position: 55 }],
+    ],
+  );
+  assert.equal(gladys.fake.lastState(feat(B.ROLLER, 'state')), 1);
+  assert.equal(gladys.fake.lastState(feat(B.SWING, 'position')), 55);
+});
+
+test('a token without the Bubendorff rights keeps the Legrand control and asks to reconnect', async (t) => {
+  const ctx = await setup(t); // token_scope: read_magellan write_magellan
+  const { gladys } = ctx;
+  ctx.netatmo.bubendorff();
+  await firstRead(ctx);
+  assert.equal(gladys.fake.connectionStatus.connected, true);
+  assert.match(gladys.fake.connectionStatus.message.en, /click Connect again to add Bubendorff/);
+  assert.match(
+    gladys.fake.connectionStatus.message.fr,
+    /reconnectez-vous.*pour ajouter Bubendorff/,
+  );
+  assert.doesNotMatch(gladys.fake.connectionStatus.message.en, /Read only/);
+
+  await create(ctx, M.OUTLET, B.ROLLER);
+  assert.deepEqual(await command(ctx, M.OUTLET, 'on', 0), { success: true });
+  const sent = setstates(ctx).length;
+  const refused = await command(ctx, B.ROLLER, 'state', 1);
+  assert.equal(refused.success, false);
+  assert.match(refused.error, /lacks write_bubendorff/);
+  assert.equal(setstates(ctx).length, sent, 'nothing sent');
+});
+
+test('an app without the Bubendorff rights: invalid_scope falls back to the Legrand ones, once', async (t) => {
+  const ctx = await setup(t, { config: APP_CONFIG });
+  const { gladys, netatmo } = ctx;
+  netatmo.appScopes = ['read_magellan', 'write_magellan'];
+  await gladys.fake.oauthAuthorizeUrl(OAUTH_FIELD, REDIRECT);
+  const ok = await gladys.fake.oauthCallback(OAUTH_FIELD, {
+    code: GOOD_CODE,
+    state: 'state-1',
+    redirectUri: REDIRECT,
+  });
+  assert.equal(ok.success, true);
+  const exchanges = netatmo.requests.filter((r) => r.path === '/oauth2/token');
+  assert.deepEqual(
+    exchanges.map((r) => r.body.scope),
+    [ALL_SCOPES, 'read_magellan write_magellan'],
+  );
+  await firstRead(ctx);
+  assert.equal(gladys.fake.connectionStatus.connected, true);
+  assert.doesNotMatch(gladys.fake.connectionStatus.message.en, /Bubendorff|Read only/);
+
+  // Refused on the Netatmo page (no code): the next Connect asks for the Legrand rights, once.
+  const scopeOf = async () =>
+    new URL(
+      (await gladys.fake.oauthAuthorizeUrl(OAUTH_FIELD, REDIRECT)).data.authorize_url,
+    ).searchParams.get('scope');
+  assert.equal(await scopeOf(), ALL_SCOPES);
+  const denied = await gladys.fake.oauthCallback(OAUTH_FIELD, {
+    state: 'state-2',
+    redirectUri: REDIRECT,
+  });
+  assert.equal(denied.success, false);
+  assert.match(denied.error, /Legrand rights only/);
+  assert.equal(await scopeOf(), 'read_magellan write_magellan');
+  assert.equal(await scopeOf(), ALL_SCOPES, 'one attempt only, no loop');
+});
+
+test('shutters: a command still waiting for the budget at the ack is withdrawn, never sent late', async (t) => {
+  const ctx = await setup(t);
+  await firstRead(ctx);
+  await create(ctx, M.SHUTTER);
+  ctx.app.limiter.pause(Date.now() + 20_000);
+  const ack = ctx.gladys.fake.setValue(
+    deviceOf(ctx, M.SHUTTER),
+    featureOf(ctx, M.SHUTTER, 'state'),
+    1,
+  );
+  await ctx.tick(TIMINGS.commandBatch);
+  await ctx.tick(TIMINGS.commandAck);
+  const result = await ack;
+  assert.equal(result.success, false);
+  assert.match(result.error, /^not sent in time/);
+  await ctx.run(30_000);
+  assert.equal(setstates(ctx).length, 0, 'never sent after the refusal');
+});
+
+test('shutters: "sent, without confirmation" only once the request left', async (t) => {
+  const ctx = await setup(t);
+  const { gladys, netatmo } = ctx;
+  await firstRead(ctx);
+  await create(ctx, M.SHUTTER);
+
+  // No answer before the ack is due.
+  let release;
+  const slow = new Promise((resolve) => {
+    release = resolve;
+  });
+  netatmo.once(
+    (r) => r.path === '/api/setstate',
+    () => slow.then(() => answer(200, { status: 'ok' })),
+  );
+  const ack = gladys.fake.setValue(deviceOf(ctx, M.SHUTTER), featureOf(ctx, M.SHUTTER, 'state'), 1);
+  await ctx.tick(TIMINGS.commandBatch);
+  await ctx.tick(TIMINGS.commandAck);
+  const late = await ack;
+  assert.equal(late.success, false);
+  assert.match(late.error, /^sent, without confirmation/);
+  release();
+  await settle();
+  assert.equal(gladys.fake.lastState(feat(M.SHUTTER, 'state')), 1, 'applied once accepted');
+
+  // A timeout after the request left: sent, without confirmation, and read again soon.
+  await ctx.run(60_000);
+  netatmo.once(
+    (r) => r.path === '/api/setstate',
+    () => {
+      const err = new Error('The operation was aborted due to timeout');
+      err.name = 'TimeoutError';
+      throw err;
+    },
+  );
+  const reads = netatmo.count('/api/homestatus');
+  const timedOut = await command(ctx, M.SHUTTER, 'state', -1);
+  assert.equal(timedOut.success, false);
+  assert.match(timedOut.error, /^sent, without confirmation \(.*timeout/);
+  await ctx.run(TIMINGS.confirmDelay);
+  assert.ok(netatmo.count('/api/homestatus') > reads, 'read again soon');
+
+  // A name resolution failure: the request never left.
+  netatmo.offline = true;
+  const offline = await command(ctx, M.SHUTTER, 'state', 1);
+  assert.deepEqual(offline, { success: false, error: 'Netatmo is unreachable' });
+});
+
+test('shutters: one command at a time per device, a stop never waits', async (t) => {
+  const ctx = await setup(t);
+  const { gladys, netatmo } = ctx;
+  await firstRead(ctx);
+  await create(ctx, M.LEVEL_SHUTTER);
+  let release;
+  const slow = new Promise((resolve) => {
+    release = resolve;
+  });
+  netatmo.once(
+    (r) => r.path === '/api/setstate',
+    () => slow.then(() => answer(200, { status: 'ok' })),
+  );
+  const device = deviceOf(ctx, M.LEVEL_SHUTTER);
+  const position = featureOf(ctx, M.LEVEL_SHUTTER, 'position');
+  const state = featureOf(ctx, M.LEVEL_SHUTTER, 'state');
+  const move = gladys.fake.setValue(device, position, 80);
+  await ctx.tick(TIMINGS.commandBatch);
+  assert.equal(setstates(ctx).length, 1, 'in flight');
+
+  const close = gladys.fake.setValue(device, state, -1);
+  const stop = gladys.fake.setValue(device, state, 0);
+  await ctx.tick(TIMINGS.commandBatch);
+  assert.deepEqual(await stop, { success: true });
+  assert.equal(setstates(ctx).length, 2);
+  assert.equal(setstates(ctx)[1].body.home.modules[0].target_position, -1, 'the stop went at once');
+
+  await ctx.run(5000);
+  assert.match((await move).error, /^sent, without confirmation/);
+  assert.match((await close).error, /previous command of this shutter is still waiting/);
+  assert.equal(setstates(ctx).length, 2, 'the close was never sent');
+  release();
+  await settle();
+});
+
+test('shutters: the ack does not wait for the states to reach Gladys', async (t) => {
+  const ctx = await setup(t);
+  await firstRead(ctx);
+  await create(ctx, M.SHUTTER, M.OUTLET);
+  t.mock.method(ctx.gladys, 'publishChangedStates', () => new Promise(() => {}));
+  assert.deepEqual(await command(ctx, M.SHUTTER, 'state', 1), { success: true });
+  assert.deepEqual(await command(ctx, M.OUTLET, 'on', 0), { success: true });
 });

@@ -86,7 +86,11 @@ test('the configuration matches the code', () => {
   assert.equal(intro.type, 'section');
   for (const lang of ['en', 'fr']) {
     assert.ok(intro.description[lang].length <= 1000, `intro.${lang} over 1000 characters`);
-    assert.match(intro.description[lang], /Legrand ni Netatmo|Legrand or Netatmo/);
+    assert.match(intro.description[lang], /Bubendorff ni Netatmo|Bubendorff or Netatmo/);
+    assert.match(
+      intro.description[lang],
+      /never tested with real Bubendorff|jamais testé avec de vrais volets Bubendorff/,
+    );
   }
   assert.ok(intro.links.length <= 5 && intro.links.every((l) => l.url.startsWith('https://')));
   for (const field of manifest.config_schema.filter((f) => f.placeholder !== undefined)) {
@@ -104,4 +108,28 @@ test('the keys of the manifest are the keys of the code', () => {
   }
   assert.equal(manifest.scene_triggers, undefined);
   assert.equal(manifest.webhooks, undefined, 'webhooks come in a later milestone');
+});
+
+test('no BOM, no mojibake, never "encrypted" in the texts', () => {
+  const files = [
+    'gladys-assistant-integration.json',
+    'README.md',
+    'CHANGELOG.md',
+    'TODO.md',
+    'CLAUDE.md',
+    'THIRD_PARTY_NOTICES.md',
+    'docs/en.md',
+    'docs/fr.md',
+    'src/i18n.js',
+  ];
+  for (const file of files) {
+    const text = read(file);
+    assert.notEqual(text.charCodeAt(0), 0xfeff, `${file} starts with a BOM`);
+    assert.doesNotMatch(
+      text,
+      /\u00c3[\u0080-\u00bf\u0192]|\u00c2[\u0080-\u00bf]|\u00e2\u20ac/,
+      `${file} has mojibake`,
+    );
+    assert.doesNotMatch(text, /chiffr|encrypt/i, `${file}: a secret is not encrypted by Gladys`);
+  }
 });

@@ -22,10 +22,38 @@ Intégration non officielle, sans lien avec Legrand ni Netatmo.
 | Interrupteur de volet (NLV, NLLV), volet Zigbee (Z3V)              | un volet : ouvrir, fermer, stop (et position)        |
 | Compteur modulaire, délesteur, compteur triphasé (NLPC, NLPS, NLY) | puissance consommée (par phase pour le NLY)          |
 | Commande sans fil (NLT, NLD)                                       | niveau de batterie                                   |
+| Volet Bubendorff iDiamant (NBR, NBO, NBS)                          | un volet : ouvrir, fermer, stop (et position)        |
 
 La position d'un volet est proposée pour les modules qui acceptent toutes les
-positions (NLLV) ; les autres s'ouvrent, se ferment et s'arrêtent. Le badge de
-chaque appareil indique si le module répond.
+positions (NLLV, et les volets qui annoncent un pas inférieur à 100) ; les
+autres s'ouvrent, se ferment et s'arrêtent. Le badge de chaque appareil indique
+si le module répond.
+
+## Volets Bubendorff iDiamant with Netatmo
+
+Les volets Bubendorff derrière une passerelle iDiamant (NBG) passent par la
+même API Netatmo Connect : ils apparaissent dans Découverte comme des
+**volets** (jamais comme des interrupteurs), avec ouvrir, fermer et stop, et une
+position seulement quand le module en donne une (la plupart des volets iDiamant
+s'ouvrent, se ferment et s'arrêtent seulement). La position favorite de la
+télécommande Bubendorff n'est pas encore proposée.
+
+**Jamais testé avec de vrais volets Bubendorff** : développé d'après les
+réponses enregistrées par pyatmo. Vos retours sont les bienvenus.
+
+Le bouton **Connecter** demande désormais aussi les droits Bubendorff
+(`read_bubendorff`, `write_bubendorff`). Si vous vous êtes connecté avant
+cette version, rien ne change pour vos modules Legrand ; si des volets
+Bubendorff sont trouvés sans le droit `write_bubendorff`, le statut vous
+invite à cliquer à nouveau sur **Connecter** pour ajouter Bubendorff. Si votre
+application Netatmo ne propose pas ces droits, l'intégration se replie sur les
+seuls droits Home + Control (tout de suite si Netatmo les refuse à la liaison,
+ou au clic suivant après une page d'autorisation refusée).
+
+Une commande de volet n'est jamais envoyée en retard : une à la fois par volet
+(un stop n'attend jamais), refusée si Netatmo n'a pas pu la prendre en quatre
+secondes, et signalée **envoyée, sans confirmation** quand elle est partie sans
+réponse, l'état étant relu quelques secondes après.
 
 Pas encore : les sorties de câble en mode fil pilote (radiateurs : leur
 puissance seulement), la VMC (NLLF), la porte de garage (NLJ), les lignes de
@@ -38,7 +66,8 @@ Il vous faut une **application Netatmo** à vous (gratuite, cinq minutes) :
 elle donne à l'intégration le droit d'utiliser l'API avec votre compte.
 
 1. Allez sur [dev.netatmo.com](https://dev.netatmo.com/apps/createanapp) et
-   connectez-vous avec le compte de l'application **Home + Control**.
+   connectez-vous avec le compte de l'application **Home + Control** (ou
+   **Bubendorff iDiamant**).
 2. **Créez une application** : nom et description libres (ex. « Gladys »),
    votre nom et votre e-mail comme contact protection des données.
 3. Dans la configuration de l'intégration dans Gladys, copiez l'**URI de
@@ -48,7 +77,8 @@ elle donne à l'intégration le droit d'utiliser l'API avec votre compte.
 4. Copiez le **client ID** et le **client secret** de l'application dans la
    configuration Gladys, et **enregistrez**.
 5. Cliquez sur **Connecter** : Netatmo vous demande de vous identifier et
-   d'accepter les droits Home + Control (`read_magellan`, `write_magellan`).
+   d'accepter les droits Home + Control (`read_magellan`, `write_magellan`)
+   et, pour les volets Bubendorff, `read_bubendorff` et `write_bubendorff`.
    Vous revenez dans Gladys, connecté.
 6. Ouvrez l'onglet **Découverte** : vos modules y sont, ajoutez ceux que vous
    voulez.
@@ -79,6 +109,9 @@ un intervalle plus long est plus sûr.
   (recopiez-la, sans espace).
 - **« Lecture seule »** : les droits Home + Control n'ont pas tous été
   acceptés : cliquez à nouveau sur **Connecter** et acceptez-les.
+- **« reconnectez-vous pour ajouter Bubendorff »** : votre autorisation date
+  d'avant les droits Bubendorff. Cliquez sur **Connecter** et acceptez-les ;
+  les modules Legrand continuent de fonctionner en attendant.
 - **« Limite d'usage atteinte »** : Netatmo a demandé de ralentir ;
   l'intégration réessaie seule. Augmentez l'intervalle si cela se répète.
 - **Un module manque** : les logs listent les modules que l'intégration ne sait

@@ -1,8 +1,9 @@
 // -----------------------------------------------------------------------------
-// The Home + Control module types (the Netatmo `type` field) and what they
-// become in Gladys (pure). Sources: the Home + Control page of the Netatmo
-// Connect documentation (which type reports or accepts which state) and the
-// type list of pyatmo (MIT).
+// The Home + Control and Bubendorff iDiamant module types (the Netatmo `type`
+// field) and what they become in Gladys (pure). Sources: the Home + Control
+// page of the Netatmo Connect documentation (which type reports or accepts
+// which state) and the type list and shutter logic of pyatmo (MIT, see
+// THIRD_PARTY_NOTICES.md).
 // -----------------------------------------------------------------------------
 
 export const KINDS = {
@@ -26,11 +27,33 @@ export const KINDS = {
 
 const K = KINDS;
 
+/** Brands: the Netatmo rights that read and drive their modules. */
+export const BRANDS = {
+  LEGRAND: { name: 'Legrand', write: 'write_magellan' },
+  BUBENDORFF: { name: 'Bubendorff', write: 'write_bubendorff' },
+};
+
 /**
- * type -> { kind, label, power (reports its power), position (accepts any
- * position), phases (its `#n` sub-entries are phases of the same meter) }.
+ * Bubendorff iDiamant with Netatmo: the NBG gateway and its radio shutters,
+ * read and driven like the Legrand ones (homesdata, homestatus, setstate with
+ * `target_position`: 100 opens, 0 closes, -1 stops, -2 goes to the favourite
+ * position, not offered here). Types from pyatmo (MIT): NBR roller shutter,
+ * NBO orientable shutter, NBS swing shutter. A module reporting a
+ * `target_position:step` of 100 only opens, closes and stops (and its
+ * `current_position` echoes the last command); a lower step accepts positions.
  */
-export const MODULE_TYPES = {
+const BUBENDORFF_TYPES = {
+  NBG: { kind: KINDS.GATEWAY, label: 'iDiamant gateway' },
+  NBR: { kind: KINDS.SHUTTER, label: 'Roller shutter' },
+  NBO: { kind: KINDS.SHUTTER, label: 'Orientable shutter' },
+  NBS: { kind: KINDS.SHUTTER, label: 'Swing shutter' },
+};
+
+/**
+ * type -> { kind, label, brand, power (reports its power), position (accepts
+ * any position), phases (its `#n` sub-entries are phases of the same meter) }.
+ */
+const LEGRAND_TYPES = {
   NLG: { kind: K.GATEWAY, label: 'Gateway' },
   NLGS: { kind: K.GATEWAY, label: 'Standalone DIN gateway' },
 
@@ -80,8 +103,22 @@ export const MODULE_TYPES = {
   NLTS: { kind: K.IGNORED, label: 'Motion sensor' },
 };
 
-/** Types of the Legrand family whose unknown members are guessed from their states. */
+const withBrand = (types, brand) =>
+  Object.fromEntries(Object.entries(types).map(([type, d]) => [type, { ...d, brand }]));
+
+export const MODULE_TYPES = {
+  ...withBrand(LEGRAND_TYPES, BRANDS.LEGRAND),
+  ...withBrand(BUBENDORFF_TYPES, BRANDS.BUBENDORFF),
+};
+
+/**
+ * Types of the Legrand family whose unknown members are guessed from their
+ * states. No such guess for `NB*`: Netatmo uses that prefix for other products.
+ */
 const FAMILY = /^(NL|Z3)/;
+
+/** The brand of a module type (Legrand for the guessed ones). */
+export const brandOf = (type) => MODULE_TYPES[type]?.brand ?? BRANDS.LEGRAND;
 
 /** The separator of the per-gang entries of a module: `<module id>#<n>`. */
 export const SUB_SEPARATOR = '#';
@@ -103,17 +140,18 @@ export function describe(type, status) {
   if (!FAMILY.test(String(type ?? ''))) {
     return null;
   }
+  const brand = BRANDS.LEGRAND;
   if (has(status, 'brightness')) {
-    return { kind: K.DIMMER, label: type, power: has(status, 'power') };
+    return { kind: K.DIMMER, label: type, brand, power: has(status, 'power') };
   }
   if (has(status, 'target_position') || has(status, 'current_position')) {
-    return { kind: K.SHUTTER, label: type };
+    return { kind: K.SHUTTER, label: type, brand };
   }
   if (has(status, 'on')) {
-    return { kind: K.SWITCH, label: type, power: has(status, 'power') };
+    return { kind: K.SWITCH, label: type, brand, power: has(status, 'power') };
   }
   if (has(status, 'power')) {
-    return { kind: K.METER, label: type, power: true };
+    return { kind: K.METER, label: type, brand, power: true };
   }
-  return { kind: K.IGNORED, label: type };
+  return { kind: K.IGNORED, label: type, brand };
 }

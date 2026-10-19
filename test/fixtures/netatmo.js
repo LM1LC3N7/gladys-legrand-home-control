@@ -180,6 +180,73 @@ export const HOMESTATUS = {
   },
 };
 
+/**
+ * A Bubendorff iDiamant gateway and its shutters, shaped like the recorded
+ * answers of pyatmo (MIT): numeric module ids, the NBG as bridge, the step
+ * under `target_position_step` (NBR) or `target_position:step` (NBO). The
+ * swing shutter with a step of 1 is made up, to cover a positionable one.
+ */
+export const B = {
+  GATEWAY: '70:ee:50:bb:00:01',
+  ROLLER: '0009999992',
+  ORIENTABLE: '0009999993',
+  SWING: '0009999994',
+};
+
+export const BUBENDORFF_MODULES = [
+  {
+    id: B.GATEWAY,
+    type: 'NBG',
+    name: 'module iDiamant',
+    setup_date: 1562262465,
+    modules_bridged: [B.ROLLER, B.ORIENTABLE, B.SWING],
+  },
+  { id: B.ROLLER, type: 'NBR', name: 'Volet entrée', setup_date: 1578551339, bridge: B.GATEWAY },
+  {
+    id: B.ORIENTABLE,
+    type: 'NBO',
+    name: 'Brise-soleil',
+    setup_date: 1594132017,
+    bridge: B.GATEWAY,
+  },
+  { id: B.SWING, type: 'NBS', name: 'Volet battant', setup_date: 1594132018, bridge: B.GATEWAY },
+];
+
+export const BUBENDORFF_STATUSES = [
+  { id: B.GATEWAY, type: 'NBG', firmware_revision: 39, wifi_strength: 65, reachable: true },
+  {
+    id: B.ROLLER,
+    type: 'NBR',
+    current_position: 0,
+    target_position: 0,
+    target_position_step: 100,
+    firmware_revision: 16,
+    rf_strength: 0,
+    last_seen: 1760000000,
+    reachable: true,
+    bridge: B.GATEWAY,
+  },
+  {
+    id: B.ORIENTABLE,
+    type: 'NBO',
+    current_position: 100,
+    target_position: 100,
+    'target_position:step': 100,
+    firmware_revision: 22,
+    reachable: true,
+    bridge: B.GATEWAY,
+  },
+  {
+    id: B.SWING,
+    type: 'NBS',
+    current_position: 30,
+    target_position: 30,
+    'target_position:step': 1,
+    reachable: true,
+    bridge: B.GATEWAY,
+  },
+];
+
 /** The token endpoint answer (a refresh answers the same shape). */
 export const tokenAnswer = (n) => ({
   access_token: `66aa0000000000000000beef|access-${n}`,

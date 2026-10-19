@@ -19,7 +19,15 @@ test('shutters: open, close, stop and positions on the step of the module', () =
   assert.deepEqual(commandFields(route('state'), COVER_STATE.CLOSE), { target_position: 0 });
   assert.deepEqual(commandFields(route('state'), COVER_STATE.STOP), { target_position: -1 });
   assert.throws(() => commandFields(route('state'), 2), /unknown shutter command/);
-  assert.deepEqual(commandFields(route('position'), 37), { target_position: 37 });
+  assert.deepEqual(commandFields(route('position'), 37, {}), { target_position: 37 });
+  assert.throws(() => commandFields(route('position'), 37), /not read yet/, 'no state read');
+  assert.throws(
+    () => commandFields(route('position'), 37, { target_position_step: 100 }),
+    /only opens, closes and stops/,
+  );
+  for (const bad of [null, '', ' ', true, undefined]) {
+    assert.throws(() => commandFields(route('state'), bad), /invalid value/, String(bad));
+  }
   assert.deepEqual(commandFields(route('position'), 37, { 'target_position:step': 5 }), {
     target_position: 35,
   });

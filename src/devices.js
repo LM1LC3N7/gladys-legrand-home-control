@@ -2,7 +2,8 @@
 // The homes topology (homesdata) and the module states (homestatus) -> Gladys
 // devices and the routing table of their features (pure).
 //
-// One Gladys device per Home + Control module. A double switch (NLIS) answers
+// One Gladys device per Home + Control (or Bubendorff iDiamant) module, the
+// shutters of both brands built the same way. A double switch (NLIS) answers
 // one `<id>#<n>` entry per gang: each gang is a device of its own. A
 // three-phase meter (NLY) answers one entry per phase: they are features of
 // the meter. External ids come from the module ids (MAC addresses): stable
@@ -14,7 +15,7 @@ import {
   DEVICE_FEATURE_TYPES as T,
   DEVICE_FEATURE_UNITS as U,
 } from '@gladysassistant/integration-sdk';
-import { KINDS, describe, isSubModule, parentOf, SUB_SEPARATOR } from './catalog.js';
+import { BRANDS, KINDS, describe, isSubModule, parentOf, SUB_SEPARATOR } from './catalog.js';
 
 export const DEVICE_TYPE = 'module';
 
@@ -239,6 +240,8 @@ export function buildModel(gladys, homes, statuses = new Map(), seen = new Map()
     deviceModules: new Map(),
     /** Modules of the family with nothing to show: [{ id, type }] */
     skipped: [],
+    /** Devices of Bubendorff modules (they need the Bubendorff rights). */
+    bubendorff: 0,
   };
   const takenIds = new Set();
   for (const home of Array.isArray(homes) ? homes : []) {
@@ -293,12 +296,15 @@ export function buildModel(gladys, homes, statuses = new Map(), seen = new Map()
       model.devices.push({
         name: nameOf(module, desc, byId),
         external_id: ids.device,
-        model: `Legrand ${desc.label} (${module.type})`,
+        model: `${(desc.brand ?? BRANDS.LEGRAND).name} ${desc.label} (${module.type})`,
         should_poll: false,
         params,
         features: features.map((f) => f.feature),
       });
       model.deviceModules.set(ids.device, { homeId: home.id, moduleId: module.id, bridge });
+      if (desc.brand === BRANDS.BUBENDORFF) {
+        model.bubendorff += 1;
+      }
       for (const f of features) {
         model.routes.set(f.feature.external_id, {
           featureId: f.feature.external_id,

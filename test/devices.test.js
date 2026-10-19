@@ -138,3 +138,23 @@ test('a feature seen once stays (an unreachable module does not lose it)', () =>
   const model = buildModel(gladys, homes, new Map([[HOME_ID, quiet]]), seen);
   assert.deepEqual(shape(device(model, M.REMOTE)), ['battery/integer (ro)']);
 });
+
+test('Bubendorff iDiamant types: the NBG is a gateway, NBR, NBO and NBS are shutters', () => {
+  assert.equal(describeModule('NBG').kind, KINDS.GATEWAY);
+  for (const type of ['NBR', 'NBO', 'NBS']) {
+    const d = describeModule(type);
+    assert.equal(d.kind, KINDS.SHUTTER, type);
+    assert.equal(d.brand.name, 'Bubendorff');
+    assert.equal(d.position, undefined, `${type}: a position only from its step`);
+  }
+  assert.equal(describeModule('NBD', { on: true }), null, 'no guess for other NB* products');
+  assert.equal(describeModule('NLP').brand.name, 'Legrand');
+});
+
+test('the Legrand devices keep their ids, models and features', () => {
+  const model = full();
+  assert.ok(model.devices.every((d) => d.model.startsWith('Legrand ')));
+  assert.equal(model.bubendorff, 0);
+  assert.deepEqual(shape(device(model, M.LEVEL_SHUTTER)), ['shutter/state', 'shutter/position']);
+  assert.deepEqual(shape(device(model, M.SHUTTER)), ['shutter/state']);
+});

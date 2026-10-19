@@ -10,7 +10,28 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+### Added
+
+- Bubendorff iDiamant shutters: the NBR, NBO and NBS shutters behind an
+  iDiamant gateway (NBG) are offered as shutters (open, close, stop, and the
+  position when the module reports one). The Connect button also asks for
+  `read_bubendorff` and `write_bubendorff`; an existing authorization keeps
+  controlling the Legrand modules, and the status only asks to connect again
+  when Bubendorff shutters are seen without `write_bubendorff`. An app without
+  the Bubendorff rights falls back to the Home + Control ones. Never tested with
+  real Bubendorff shutters.
+- `LICENSE` and `THIRD_PARTY_NOTICES.md` (pyatmo, MIT), copied into the image.
+
 ### Changed
+
+- Shutter commands (Legrand and Bubendorff) run one at a time per shutter (a
+  stop never waits); a command still waiting for the Netatmo request budget
+  when Gladys expects the answer is refused and never sent later; a command
+  that left without an answer is reported "sent, without confirmation" and
+  the state is read again. A position needs the state read from Netatmo and is
+  refused for a shutter that only opens, closes and stops.
+- A command is acknowledged without waiting for its states to reach Gladys; an
+  empty or missing value is refused instead of being read as 0.
 
 - README: the store install note replaces the work-in-progress notice, and the
   Releasing section no longer says the store topic is still to be added.

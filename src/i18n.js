@@ -22,12 +22,16 @@ export const T = {
     fr: `Connecté à Netatmo : ${plural(homes, 'logement', 'logements')}, ${plural(devices, 'appareil', 'appareils')}. Ouvrez Découverte pour les ajouter.`,
   }),
   noModule: {
-    en: 'Connected to Netatmo, but this account has no Legrand Home + Control gateway.',
-    fr: "Connecté à Netatmo, mais ce compte n'a aucune passerelle Legrand Home + Control.",
+    en: 'Connected to Netatmo, but this account has no Legrand Home + Control or Bubendorff iDiamant gateway.',
+    fr: "Connecté à Netatmo, mais ce compte n'a aucune passerelle Legrand Home + Control ni Bubendorff iDiamant.",
   },
   readOnly: {
     en: ' Read only: the authorization lacks write_magellan, click Connect again to control the devices.',
     fr: " Lecture seule : l'autorisation n'inclut pas write_magellan, cliquez à nouveau sur Connecter pour piloter les appareils.",
+  },
+  addBubendorff: {
+    en: ' Bubendorff shutters found, but the authorization lacks write_bubendorff: click Connect again to add Bubendorff.',
+    fr: " Volets Bubendorff trouvés, mais l'autorisation n'inclut pas write_bubendorff : reconnectez-vous (Connecter) pour ajouter Bubendorff.",
   },
   reconnect: {
     en: 'Netatmo refused the authorization (expired, revoked, or wrong client secret): check the app credentials, then click Connect again.',

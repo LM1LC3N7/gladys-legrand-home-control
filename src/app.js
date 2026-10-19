@@ -12,10 +12,13 @@ import {
   NOTHING_TO_MODIFY,
   commandFields,
   expectedStates,
+  isShutterCommand,
+  isStop,
   moduleEntry,
 } from './commands.js';
+import { BRANDS, brandOf } from './catalog.js';
 import { normalizeConfig } from './config.js';
-import { OAUTH_FIELD, TIMINGS } from './constants.js';
+import { LEGRAND_SCOPES, OAUTH_FIELD, SCOPES, TIMINGS } from './constants.js';
 import { FEATURES, PARAMS, buildModel, mergeSeen } from './devices.js';
 import { T, join } from './i18n.js';
 import { PRIORITY, RequestLimiter } from './limiter.js';
@@ -26,13 +29,19 @@ import { TokenManager } from './tokens.js';
 
 const reasonOf = (err) => String(err?.message ?? err).slice(0, 200);
 
+/** Returned by `within` when the delay ran out first. */
+const LATE = Symbol('late');
+
 /** What the user reads when a command fails on the Netatmo side. */
 function commandFailure(err) {
+  if (err?.unconfirmed) {
+    return `sent, without confirmation (${reasonOf(err)}): the state is read again in a few seconds`;
+  }
   switch (err?.kind) {
     case ERROR_KINDS.GRANT:
       return 'Netatmo refused the authorization: click Connect again in the configuration';
     case ERROR_KINDS.SCOPE:
-      return 'the authorization lacks write_magellan: click Connect again in the configuration';
+      return 'the authorization lacks the write rights (write_magellan, or write_bubendorff for the Bubendorff shutters): click Connect again in the configuration';
     case ERROR_KINDS.THROTTLED:
       return 'Netatmo usage limit reached, try again later';
     case ERROR_KINDS.NETWORK:
@@ -71,6 +80,10 @@ export class LegrandApp {
     /** homeId -> { modules: Map(moduleId -> entry), waiters } (commands being batched) */
     this.batches = new Map();
     this.confirmTimers = new Map();
+    /** deviceId -> settles when the last shutter command of the device is answered */
+    this.shutterQueue = new Map();
+    /** One-shot: the next Connect asks for the Legrand rights only (an app without Bubendorff). */
+    this.legrandOnlyNext = false;
     this.pollTimer = undefined;
     this.running = undefined;
     this.rerun = false;
@@ -151,7 +164,13 @@ export class LegrandApp {
       this.model.homes.length === 0
         ? T.noModule
         : T.connected(this.model.homes.length, this.model.devices.length);
-    return this.tokens.hasAllScopes ? base : join(base, T.readOnly);
+    let message = this.tokens.hasAllScopes ? base : join(base, T.readOnly);
+    // Bubendorff shutters seen, the token known to lack their write right
+    // (linked before it was asked): the Legrand control is untouched.
+    if (this.model.bubendorff > 0 && this.tokens.lacks(BRANDS.BUBENDORFF.write)) {
+      message = join(message, T.addBubendorff);
+    }
+    return message;
   }
 
   warnOnce(key, message) {
@@ -182,8 +201,10 @@ export class LegrandApp {
       }
     }
     const state = this.randomId();
-    this.oauthStates.set(state, { expiresAt: now + TIMINGS.oauthStateTtl, redirectUri });
-    return authorizeUrl({ clientId: this.config.clientId, redirectUri, state });
+    const scopes = this.legrandOnlyNext ? LEGRAND_SCOPES : SCOPES;
+    this.legrandOnlyNext = false;
+    this.oauthStates.set(state, { expiresAt: now + TIMINGS.oauthStateTtl, redirectUri, scopes });
+    return authorizeUrl({ clientId: this.config.clientId, redirectUri, state, scopes });
   }
 
   async oauthCallback(key, { code, state, redirectUri } = {}) {
@@ -195,12 +216,25 @@ export class LegrandApp {
     if (!pending || pending.expiresAt <= this.now()) {
       throw new Error('this authorization is unknown or expired: click Connect again');
     }
+    const askedBubendorff = pending.scopes.length > LEGRAND_SCOPES.length;
     if (typeof code !== 'string' || code === '') {
+      // Refused on the Netatmo page: maybe by the user, maybe `invalid_scope`
+      // (an app without the Bubendorff rights). The next click asks for the
+      // Legrand rights only, once: no loop, every attempt is a click.
+      if (askedBubendorff) {
+        this.legrandOnlyNext = true;
+        throw new Error(
+          'Netatmo sent no authorization code (refused, or your Netatmo app does not offer the Bubendorff rights): click Connect again, the next attempt asks for the Legrand rights only',
+        );
+      }
       throw new Error('Netatmo sent no authorization code');
     }
     try {
-      await this.tokens.exchange(code, redirectUri || pending.redirectUri);
+      await this.tokens.exchange(code, redirectUri || pending.redirectUri, pending.scopes);
     } catch (err) {
+      if (err?.kind === ERROR_KINDS.SCOPE && askedBubendorff) {
+        this.legrandOnlyNext = true;
+      }
       this.logger.warn(`Linking the Netatmo account failed: ${err.message}`);
       await this.setStatus(false, T.authFailed(reasonOf(err)));
       throw new Error(`Netatmo refused the authorization: ${reasonOf(err)}`, { cause: err });
@@ -486,51 +520,157 @@ export class LegrandApp {
     if (route.readOnly) {
       throw new Error(`${feature?.name ?? route.key} is read-only`);
     }
+    if (isShutterCommand(route)) {
+      return this.shutterCommand(route, value);
+    }
     const fields = commandFields(route, value, this.statusOf(route));
     if (!this.tokens.connected) {
       throw new Error('no Netatmo account is linked: click Connect in the configuration');
     }
-    const sent = this.enqueue(route.homeId, moduleEntry(route, fields));
-    const confirm = async () => {
-      for (const [key, v] of expectedStates(route, value)) {
-        const featureId = `${route.deviceId}:${key}`;
-        if (this.model.routes.has(featureId) || this.created.has(featureId)) {
-          this.record(featureId, v);
-        }
-      }
-      this.scheduleConfirm(route.homeId);
-      await this.publisher.flush();
-    };
-    let timer;
-    const late = new Promise((resolve) => {
-      timer = this.timers.setTimeout(() => resolve('late'), TIMINGS.commandAck);
-    });
-    const outcome = await Promise.race([sent.then(() => 'sent'), late]).finally(() =>
-      this.timers.clearTimeout(timer),
+    const { sent } = this.enqueue(route.homeId, moduleEntry(route, fields));
+    const outcome = await this.within(
+      sent.then(() => 'sent'),
+      TIMINGS.commandAck,
     );
     if (outcome === 'sent') {
-      await confirm();
+      this.accepted(route, value);
       return;
     }
     // The request waits for the Netatmo budget: ack now, apply when it goes.
     this.logger.info(`Command for ${route.moduleId} queued (Netatmo request budget)`);
     sent
-      .then(confirm)
+      .then(() => this.accepted(route, value))
       .catch((err) => this.logger.warn(`Command for ${route.moduleId} failed: ${err.message}`));
   }
 
-  /** Commands of a same home within a short delay share one setstate request. */
-  enqueue(homeId, entry) {
+  /**
+   * A shutter command (Legrand or Bubendorff): one at a time per device (a
+   * stop never waits), decided on the last state read from Netatmo, never sent
+   * after its ack: a command still waiting for the request budget when the ack
+   * is due is withdrawn and refused; one that left without an answer yet is
+   * "sent, without confirmation" and the home is read again.
+   */
+  async shutterCommand(route, value) {
+    const started = this.now();
+    const remaining = () => TIMINGS.commandAck - (this.now() - started);
+    let fields = commandFields(route, value, this.statusOf(route));
+    if (!this.tokens.connected) {
+      throw new Error('no Netatmo account is linked: click Connect in the configuration');
+    }
+    const brand = brandOf(route.type);
+    if (brand === BRANDS.BUBENDORFF && this.tokens.lacks(brand.write)) {
+      throw new Error(
+        'the authorization lacks write_bubendorff: click Connect again in the configuration to control the Bubendorff shutters',
+      );
+    }
+    if (!isStop(fields)) {
+      const previous = this.shutterQueue.get(route.deviceId);
+      if (previous) {
+        if ((await this.within(previous, remaining())) === LATE) {
+          throw new Error(
+            'not sent: the previous command of this shutter is still waiting for Netatmo, try again',
+          );
+        }
+        // Decided again on what Netatmo answered meanwhile.
+        fields = commandFields(route, value, this.statusOf(route));
+      }
+    }
+    const job = this.enqueue(route.homeId, moduleEntry(route, fields), { exclusive: true });
+    const settled = job.sent.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.shutterQueue.set(route.deviceId, settled);
+    settled.then(() => {
+      if (this.shutterQueue.get(route.deviceId) === settled) {
+        this.shutterQueue.delete(route.deviceId);
+      }
+    });
+    const outcome = await this.within(
+      job.sent.then(() => 'sent'),
+      remaining(),
+    );
+    if (outcome === 'sent') {
+      this.accepted(route, value);
+      return;
+    }
+    if (job.withdraw()) {
+      throw new Error(
+        'not sent in time (Netatmo request budget, or a previous command), try again in a moment',
+      );
+    }
+    job.sent
+      .then(() => this.accepted(route, value))
+      .catch((err) => this.logger.warn(`Command for ${route.moduleId}: ${err.message}`));
+    throw new Error(
+      'sent, without confirmation (Netatmo is slow to answer): the state is read again in a few seconds',
+    );
+  }
+
+  /** Resolves the promise's value, or LATE after `ms` (its rejection still propagates). */
+  within(promise, ms) {
+    let timer;
+    const late = new Promise((resolve) => {
+      timer = this.timers.setTimeout(() => resolve(LATE), Math.max(0, ms));
+    });
+    return Promise.race([promise, late]).finally(() => this.timers.clearTimeout(timer));
+  }
+
+  /**
+   * Netatmo accepted a command: shows the expected states and reads the home
+   * again soon. Never awaited by the ack: a slow Gladys does not delay it.
+   */
+  accepted(route, value) {
+    for (const [key, v] of expectedStates(route, value)) {
+      const featureId = `${route.deviceId}:${key}`;
+      if (this.model.routes.has(featureId) || this.created.has(featureId)) {
+        this.record(featureId, v);
+      }
+    }
+    this.scheduleConfirm(route.homeId);
+    this.publisher
+      .flush()
+      .catch((err) => this.logger.warn(`Publishing the states failed: ${err.message}`));
+  }
+
+  /**
+   * Commands of a same home within a short delay share one setstate request.
+   * `exclusive` (shutters): the entry replaces a pending one of the same module,
+   * whose command is refused as replaced. Returns `{ sent, withdraw }`:
+   * `withdraw()` takes the command back while the request has not left.
+   */
+  enqueue(homeId, entry, { exclusive = false } = {}) {
     let batch = this.batches.get(homeId);
     if (!batch) {
-      batch = { modules: new Map(), waiters: [] };
+      batch = { modules: new Map(), waiters: [], left: false };
       this.batches.set(homeId, batch);
       this.timers.setTimeout(() => this.sendBatch(homeId, batch), TIMINGS.commandBatch);
     }
-    batch.modules.set(entry.id, { ...batch.modules.get(entry.id), ...entry });
-    return new Promise((resolve, reject) => {
-      batch.waiters.push({ moduleId: entry.id, resolve, reject });
+    if (exclusive && batch.modules.has(entry.id)) {
+      const replaced = new Error('not sent: replaced by a newer command of this shutter');
+      for (const w of batch.waiters.filter((x) => x.moduleId === entry.id)) {
+        w.reject(replaced);
+      }
+      batch.waiters = batch.waiters.filter((x) => x.moduleId !== entry.id);
+    }
+    batch.modules.set(entry.id, exclusive ? entry : { ...batch.modules.get(entry.id), ...entry });
+    let waiter;
+    const sent = new Promise((resolve, reject) => {
+      waiter = { moduleId: entry.id, resolve, reject };
+      batch.waiters.push(waiter);
     });
+    const withdraw = () => {
+      if (batch.left) {
+        return false;
+      }
+      batch.waiters = batch.waiters.filter((w) => w !== waiter);
+      if (!batch.waiters.some((w) => w.moduleId === entry.id)) {
+        batch.modules.delete(entry.id);
+      }
+      waiter.reject(new Error('withdrawn before it was sent'));
+      return true;
+    };
+    return { sent, withdraw };
   }
 
   async sendBatch(homeId, batch) {
@@ -539,16 +679,26 @@ export class LegrandApp {
     }
     let errors;
     try {
-      errors = await this.client.setState(homeId, [...batch.modules.values()]);
+      errors = await this.client.setState(homeId, () => [...batch.modules.values()], {
+        onSend: () => {
+          batch.left = true;
+        },
+      });
     } catch (err) {
       const error = new Error(commandFailure(err));
       for (const waiter of batch.waiters) {
         waiter.reject(error);
       }
+      if (err?.unconfirmed) {
+        this.scheduleConfirm(homeId);
+      }
       if (err?.kind === ERROR_KINDS.GRANT) {
         await this.setStatus(false, T.reconnect);
       }
       return;
+    }
+    if (errors === null) {
+      return; // every command was withdrawn before the request left
     }
     const codes = new Map(errors.map((e) => [String(e?.id), Number(e?.code)]));
     for (const waiter of batch.waiters) {

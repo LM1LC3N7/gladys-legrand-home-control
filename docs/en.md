@@ -22,10 +22,36 @@ affiliated with Legrand or Netatmo.
 | Roller shutter switch (NLV, NLLV), Zigbee covering (Z3V)            | a shutter: open, close, stop (and position) |
 | DIN energy meter, load shedder, three-phase meter (NLPC, NLPS, NLY) | power drawn (per phase for NLY)             |
 | Remote control (NLT, NLD)                                           | battery level                               |
+| Bubendorff iDiamant shutter (NBR, NBO, NBS)                         | a shutter: open, close, stop (and position) |
 
 The position of a shutter is offered for the modules that accept any position
-(NLLV); the others open, close and stop. Each device shows on its badge
-whether the module answers.
+(NLLV, and the shutters that report a step under 100); the others open, close
+and stop. Each device shows on its badge whether the module answers.
+
+## Bubendorff iDiamant with Netatmo shutters
+
+The Bubendorff shutters behind an iDiamant gateway (NBG) go through the same
+Netatmo Connect API: they show up in Discovery as **shutters** (never as
+switches), with open, close and stop, and a position only when the module
+reports one (most iDiamant shutters only open, close and stop). The favourite
+position of the Bubendorff remote is not offered yet.
+
+**Never tested with real Bubendorff shutters**: developed from the answers
+recorded by pyatmo. Your feedback is welcome.
+
+The **Connect** button now also asks for the Bubendorff rights
+(`read_bubendorff`, `write_bubendorff`). If you connected before this version,
+nothing changes for your Legrand modules; when Bubendorff shutters are found
+without the `write_bubendorff` right, the status asks you to click **Connect**
+again to add Bubendorff. If your Netatmo app does not offer these rights,
+the integration falls back to the Home + Control rights alone (at once when
+Netatmo refuses them while linking, or at the next click after a refused
+authorization page).
+
+A shutter command is never sent late: one at a time per shutter (a stop never
+waits), refused if Netatmo could not take it within four seconds, and
+reported as **sent, without confirmation** when it left without an answer,
+the state being read again a few seconds later.
 
 Not yet: cable outlets in pilot-wire mode (radiators: their power only),
 ventilation (NLLF), garage door (NLJ), the ecometer lines (NLE), the button
@@ -37,7 +63,8 @@ You need a **Netatmo app** of your own (free, five minutes): it gives the
 integration the right to use the API with your account.
 
 1. Go to [dev.netatmo.com](https://dev.netatmo.com/apps/createanapp) and sign
-   in with the account of the **Home + Control** app.
+   in with the account of the **Home + Control** (or **Bubendorff iDiamant**)
+   app.
 2. **Create an app**: any name and description (e.g. "Gladys"), your name and
    email as data protection contact.
 3. In the Gladys configuration of the integration, copy the **redirect URI**
@@ -46,8 +73,9 @@ integration the right to use the API with your account.
 4. Copy the **client ID** and the **client secret** of the app into the Gladys
    configuration, and **save**.
 5. Click **Connect**: Netatmo asks you to sign in and to accept the Home +
-   Control rights (`read_magellan`, `write_magellan`). You come back to Gladys,
-   connected.
+   Control rights (`read_magellan`, `write_magellan`) and, for the
+   Bubendorff shutters, `read_bubendorff` and `write_bubendorff`. You come back
+   to Gladys, connected.
 6. Open the **Discovery** tab: your modules are there, add the ones you want.
 
 **Test the connection** shows how many homes and devices were found.
@@ -72,6 +100,9 @@ asks it to. With several homes or many commands, a longer interval is safer.
   not exactly the one Gladys shows (copy it again, without a space).
 - **"Read only"**: the Home + Control rights were not all accepted: click
   **Connect** again and accept them.
+- **"click Connect again to add Bubendorff"**: your authorization predates the
+  Bubendorff rights. Click **Connect** and accept them; the Legrand modules
+  keep working meanwhile.
 - **"usage limit reached"**: Netatmo asked to slow down; the integration
   retries by itself. Increase the refresh interval if it comes back.
 - **A module is missing**: the logs list the modules the integration cannot

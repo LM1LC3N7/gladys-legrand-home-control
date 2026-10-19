@@ -12,7 +12,17 @@ export const ACTIONS = {
 export const OAUTH_FIELD = 'netatmo_account';
 
 /** Home + Control rights: Legrand wiring devices and electrical panel products. */
-export const SCOPES = ['read_magellan', 'write_magellan'];
+export const LEGRAND_SCOPES = ['read_magellan', 'write_magellan'];
+
+/** Bubendorff iDiamant with Netatmo rights (the shutters behind an NBG gateway). */
+export const BUBENDORFF_SCOPES = ['read_bubendorff', 'write_bubendorff'];
+
+/**
+ * The rights the "Connect" button asks for. Only the Legrand ones are required:
+ * a token without the Bubendorff rights (linked before they were asked, or an
+ * app that does not offer them) keeps controlling the Legrand modules.
+ */
+export const SCOPES = [...LEGRAND_SCOPES, ...BUBENDORFF_SCOPES];
 
 export const NETATMO = {
   authorizeUrl: 'https://api.netatmo.com/oauth2/authorize',
